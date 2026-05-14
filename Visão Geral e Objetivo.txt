@@ -1,0 +1,28 @@
+Visão Geral e Objetivo
+Desenvolver um dispositivo de aquisição de dados (Data Logger) projetado para monitorar
+variáveis dinâmicas no espaço. O foco não é a movimentação, mas a precisão extrema na
+captação, fusão e envio de dados de geolocalização e inércia.
+
+----------------------
+Hardware:
+	Placa: Node MCU Amica CP2102
+	IMU: MPU6050
+	Modulo GPS: NEO-6M
+
+
+Fluxo de Dados Dispositivo:
+- Ler Dados Modulo GPS.
+- Ler Dados Modulo IMU.
+- Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter)
+- Enviar os dados em tempo real via telemetria (Wi-Fi/Bluetooth/Rádio) para servidor no computador.
+
+Fluxo de Dados no Servidor Computador:
+- Receber dados do Dispositivo.
+- Imprimir em tempo real no Console, dados do GPS, dados do IMU e a Fusão dos Dados.
+- Mostrar em tempo real e plotá-los em um painel interativo no computador utilizando OpenStreetMap e apis livre.
+--------------------
+
+Resultados Esperados:
+- Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial).
+- Capacidade de recuperar um trajeto executado externamente de forma legível.
+- Desafios Bônus: Transmitir os dados em tempo real e plotá-los em um painel interativo no computador. Como um google maps/earth.
