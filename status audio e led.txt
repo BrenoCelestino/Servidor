@@ -1,5 +1,0 @@
-Procurando Rede, Audio Buzzer procurando rede
-Piscar LED em onda quando conectar na rede, Barulho ao conectar na rede
-Piscar rápido LED vermelho perdendo rede, barulho buzzer leve.
-Piscar alternado led quando perder rede, 4 segundos de som ao perder conexão
-repete

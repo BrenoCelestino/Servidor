@@ -8,21 +8,46 @@ Hardware:
 	Placa: Node MCU Amica CP2102
 	IMU: MPU6050
 	Modulo GPS: NEO-6M
+	Modulo SD: (A verificar modulo em espesifico)
+	Botão Para Conexão
 
 
 Fluxo de Dados Dispositivo:
 - Ler Dados Modulo GPS.
 - Ler Dados Modulo IMU.
-- Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter)
-- Enviar os dados em tempo real via telemetria (Wi-Fi/Bluetooth/Rádio) para servidor no computador.
+- Ler Dados de de data e hora do relógio atômico do Modulo GPS.
+- Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter).
+- Se, o modulo GPS estiver com cobertura de GPS, salvar dados em tempo real, salvando todo historico de dados na memoria SD/CartãoDeMemoria quando não estiver 
+conectado no servidor, fazendo a atualização 1 vez por segundo neste modo, ainda que o sistema ainda não tenha se conectado nenhuma vez no servidor.
+- Esperar 5 segundos antes de tentar iniciar a conexão com servidor para compensar etapa anterior.
+- Se não conseguir se conectar com servidor dentro de 30 segundos, não tentar mais e permanecer no modo desconectado.
+- Voltar a tentar se conectar ao servidor se usuario precionar botão por 2 segundos, nesse caso, permanecer tentando se conectar infinitamente, ao menos que botão seja
+precionado novamente por 2 segundos.
+- Se estiver conectado no Servidor, enviar os dados em tempo real via telemetria (Wi-Fi) para servidor no computador, atualizando 5 vezes por segundo.
+-- Espera-se que no fim do fluxo, o dispositivo consiga armazenar dados offiline com dados fusados e com horario em tempo real e enviar em tempo real
+ao servidor.
 
 Fluxo de Dados no Servidor Computador:
 - Receber dados do Dispositivo.
 - Imprimir em tempo real no Console, dados do GPS, dados do IMU e a Fusão dos Dados.
 - Mostrar em tempo real e plotá-los em um painel interativo no computador utilizando OpenStreetMap e apis livre.
+- Registrar todo o historico, com uma linha desenhada no mapa, do caminho passado pelo qual o rastreador ja passou.
+- Quando o dispositivo for conectado pela primeira vez, ou quando ele voltar de um reconexão, receber os dados que estão sendo salvos na memoria do mesmo
+quando estava desconectado e preencher no historico do mapa desenhado de por onde ele passou quando esta desconectado, de preferencia com uma cor diferente
+de quanto estava conectado.
+
 --------------------
 
 Resultados Esperados:
 - Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial).
-- Capacidade de recuperar um trajeto executado externamente de forma legível.
-- Desafios Bônus: Transmitir os dados em tempo real e plotá-los em um painel interativo no computador. Como um google maps/earth.
+- Capacidade de recuperar um trajeto executado externamente de forma legível, no caso, recuperar um trajeto que o dispositivo fez quando estava desconectado
+do servidor.
+- Transmitir os dados em tempo real e plotá-los em um painel interativo no computador, mostrando posição atual e todo historico passado. Como um google maps/earth.
+
+--------
+
+Status de LED da propria placa:
+- Rodando Desconectado Sem Nunca Ter Se Conectado ao Servidor = Piscar Constantemente.
+- Rodando Desconectado = Osilando Rapido.
+- Rodando Conectado ao Servidor = Oscilando Devagar.
+- Buscando Servidor = Piscar Rapido 4 segundo, parar 1, recomeçar.
