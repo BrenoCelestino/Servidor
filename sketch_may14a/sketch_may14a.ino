@@ -19,7 +19,7 @@
 // ==========================================
 const char* ssid = "NOME_DA_SUA_REDE_WIFI";
 const char* password = "SENHA_DA_SUA_REDE";
-const char* serverIP = "192.168.1.100"; // IP do Servidor Python
+const char* serverIP = "192.168.1.100"; // IP do Servidor Python / Celular
 const int udpPort = 8080;               // Porta para Telemetria Tempo Real
 const int tcpPort = 8081;               // Porta para Despejo do Histórico (SD)
 
@@ -31,6 +31,7 @@ WiFiClient tcpClient;
 // ==========================================
 enum SystemState { BOOT_DELAY, SEARCHING, OFFLINE, SENDING_HISTORY, ONLINE };
 SystemState currentState = BOOT_DELAY;
+SystemState lastState = BOOT_DELAY; // Para rastrear mudanças no Console Serial
 
 bool hasEverConnected = false;
 bool forceInfiniteSearch = false;
@@ -39,6 +40,7 @@ uint32_t bootTimer = 0;
 uint32_t searchTimer = 0;
 uint32_t offlineSaveTimer = 0;
 uint32_t onlineSendTimer = 0;
+uint32_t serialPrintTimer = 0; // Para prints de debug intervalados
 
 // Variáveis do Botão
 uint32_t btnPressStartTime = 0;
@@ -75,30 +77,53 @@ SimpleKalman kalmanRoll, kalmanPitch;
 float kalAngleX, kalAngleY;
 
 // ==========================================
+// FUNÇÕES AUXILIARES PARA DEBUG SERIAL
+// ==========================================
+String getStateName(SystemState s) {
+  switch(s) {
+    case BOOT_DELAY: return "BOOT_DELAY (Estabilizando Sensores)";
+    case SEARCHING: return "SEARCHING (Buscando Wi-Fi)";
+    case OFFLINE: return "OFFLINE (Monitoramento Interno via SD)";
+    case SENDING_HISTORY: return "SENDING_HISTORY (Despejando Cartao SD via TCP)";
+    case ONLINE: return "ONLINE (Enviando Telemetria UDP 5Hz)";
+    default: return "DESCONHECIDO";
+  }
+}
+
+// ==========================================
 // FUNÇÕES DE HARDWARE INICIAL
 // ==========================================
 void setup() {
   Serial.begin(115200);
+  delay(500);
+  Serial.println("\n\n=========================================");
+  Serial.println("[SISTEMA] Iniciando Data Logger Espacial");
+  Serial.println("=========================================");
+
   gpsSerial.begin(9600);
+  Serial.println("[GPS] Modulo NEO-6M aguardando conexao...");
 
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, HIGH); // Apaga LED
-  pinMode(BTN_PIN, INPUT);     // D8 já tem Pull-Down físico
+  pinMode(BTN_PIN, INPUT);     
 
   // Inicializa MPU6050
   Wire.begin();
   Wire.beginTransmission(MPU); Wire.write(0x6B); Wire.write(0); Wire.endTransmission(true);
+  Serial.println("[IMU] Modulo MPU6050 (Kalman Filter) inicializado.");
 
   // Inicializa Cartão SD
   if (!SD.begin(SD_CS_PIN)) {
-    Serial.println("Erro no Cartao SD!");
+    Serial.println("[SD] ATENCAO: Falha ao iniciar Cartao SD! (Desconectado/Erro Pinos)");
   } else {
-    Serial.println("Cartao SD Inicializado.");
+    Serial.println("[SD] Cartao Micro SD inicializado e pronto para Store & Forward.");
   }
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
+  Serial.println("[ESTADO] Entrando em: " + getStateName(currentState));
+  
   bootTimer = millis();
   timerIMU = micros();
 }
@@ -112,6 +137,13 @@ void loop() {
   handleButton();
   updateLED();
   executeStateMachine();
+  
+  // Imprime MUDANÇA DE ESTADO no console quando ocorrer
+  if (currentState != lastState) {
+    Serial.println("\n>>> [MUDANCA DE MODO] De: " + getStateName(lastState));
+    Serial.println(">>> [MUDANCA DE MODO] Para: " + getStateName(currentState) + "\n");
+    lastState = currentState;
+  }
 }
 
 // ==========================================
@@ -153,15 +185,19 @@ void handleButton() {
     btnIsPressed = false;
   }
 
-  // Se segurar por 2 segundos
   if (btnIsPressed && (millis() - btnPressStartTime >= 2000)) {
-    forceInfiniteSearch = !forceInfiniteSearch; // Inverte o modo
-    btnIsPressed = false; // Reseta para não disparar múltiplas vezes
+    forceInfiniteSearch = !forceInfiniteSearch; 
+    btnIsPressed = false; 
     
-    if (forceInfiniteSearch && currentState == OFFLINE) {
-      currentState = SEARCHING;
-      searchTimer = millis();
-      WiFi.begin(ssid, password);
+    if (forceInfiniteSearch) {
+      Serial.println("\n[MANUAL OVERRIDE] Botao pressionado! Forcando conexao INFINITA.");
+      if (currentState == OFFLINE) {
+        currentState = SEARCHING;
+        searchTimer = millis();
+        WiFi.begin(ssid, password);
+      }
+    } else {
+      Serial.println("\n[MANUAL OVERRIDE] Botao pressionado! Voltando ao modo de economia 30s.");
     }
   }
 }
@@ -173,7 +209,6 @@ void executeStateMachine() {
   switch (currentState) {
     
     case BOOT_DELAY:
-      // Espera 5 segundos após ligar para compensar pico dos sensores
       if (millis() - bootTimer >= 5000) {
         currentState = SEARCHING;
         searchTimer = millis();
@@ -182,50 +217,61 @@ void executeStateMachine() {
       break;
 
     case SEARCHING:
+      // Status de Debug a cada 2 segundos no terminal
+      if (millis() - serialPrintTimer >= 2000) {
+        serialPrintTimer = millis();
+        Serial.println("[WIFI] Buscando rede... | Sats Fixados: " + String(gps.satellites.value()));
+      }
+
       if (WiFi.status() == WL_CONNECTED) {
         hasEverConnected = true;
-        // Se houver arquivo no SD, manda. Senão, vai direto pra Online.
+        Serial.println("\n[WIFI] Conectado com Sucesso! IP: " + WiFi.localIP().toString());
+        
         if (SD.exists("/historico.txt")) {
+          Serial.println("[SD] Arquivo /historico.txt encontrado. Iniciando recuperacao de dados.");
           currentState = SENDING_HISTORY;
         } else {
+          Serial.println("[SD] Nenhum trajeto pendente no SD. Entrando em modo Tempo Real.");
           currentState = ONLINE;
         }
       } 
-      // Se passar 30 segundos e não conectou (e não foi forçado pelo botão)
       else if (!forceInfiniteSearch && (millis() - searchTimer >= 30000)) {
+        Serial.println("\n[WIFI] Timeout de 30s atingido. Desligando antena para poupar energia.");
         WiFi.disconnect();
         currentState = OFFLINE;
       }
       break;
 
     case OFFLINE:
-      // Grava no SD 1 vez por segundo, apenas SE o GPS estiver com cobertura
       if (millis() - offlineSaveTimer >= 1000) {
         offlineSaveTimer = millis();
+        
+        // Verifica se o GPS tem sinal para gravar no SD
         if (gps.location.isValid() && gps.time.isValid()) {
           salvarSDOffline();
+        } else {
+          Serial.println("[SD OFF] Aguardando sinal GPS... Sats: " + String(gps.satellites.value()));
         }
       }
-      // Se por acaso voltar a conectar (ex: se o roteador religar na cara dele)
+      
       if (WiFi.status() == WL_CONNECTED) {
+        Serial.println("\n[WIFI] Conexao retomada espontaneamente!");
         currentState = SD.exists("/historico.txt") ? SENDING_HISTORY : ONLINE;
       }
       break;
 
     case SENDING_HISTORY:
-      // Envia o SD via TCP (Garante entrega do histórico)
       enviarHistoricoTCP(); 
       break;
 
     case ONLINE:
-      // Se perder a conexão
       if (WiFi.status() != WL_CONNECTED) {
+        Serial.println("\n[WIFI] CONEXAO PERDIDA! Retomando buscas...");
         currentState = SEARCHING;
         searchTimer = millis();
-        forceInfiniteSearch = false; // Volta a respeitar os 30s
+        forceInfiniteSearch = false; 
         WiFi.begin(ssid, password);
       } else {
-        // Se conectado, envia 5 vezes por segundo (5Hz) via UDP
         if (millis() - onlineSendTimer >= 200) {
           onlineSendTimer = millis();
           enviarUDP();
@@ -241,13 +287,15 @@ void executeStateMachine() {
 void salvarSDOffline() {
   File dataFile = SD.open("/historico.txt", FILE_WRITE);
   if (dataFile) {
-    // String ISO8601 Date/Time + Dados (Otimizado em formato CSV)
     String data = String(gps.date.year()) + "-" + String(gps.date.month()) + "-" + String(gps.date.day()) + "T" +
                   String(gps.time.hour()) + ":" + String(gps.time.minute()) + ":" + String(gps.time.second()) + "Z," +
                   String(gps.location.lat(), 6) + "," + String(gps.location.lng(), 6) + "," + 
                   String(kalAngleX, 2) + "," + String(kalAngleY, 2);
     dataFile.println(data);
     dataFile.close();
+    Serial.println("[SD GRAVANDO] 1Hz -> Rota isolada salva com sucesso! (Sats: " + String(gps.satellites.value()) + ")");
+  } else {
+    Serial.println("[SD ERRO] Falha ao tentar escrever no /historico.txt!");
   }
 }
 
@@ -264,22 +312,34 @@ void enviarUDP() {
   udp.beginPacket(serverIP, udpPort);
   udp.write(payload.c_str());
   udp.endPacket();
+
+  // Print no console (Não polui muito porque está a 115200 baud)
+  Serial.println("[UDP TX] " + payload);
 }
 
 void enviarHistoricoTCP() {
+  Serial.println("\n[TCP] Abrindo conexao com Servidor Base (Porta " + String(tcpPort) + ")...");
+  
   if (tcpClient.connect(serverIP, tcpPort)) {
+    Serial.println("[TCP] Conectado! Enviando historico de voo/trajeto...");
+    
     File dataFile = SD.open("/historico.txt", FILE_READ);
     if (dataFile) {
       while (dataFile.available()) {
         tcpClient.write(dataFile.read());
-        readGPS(); // Mantém o buffer do GPS vazio enquanto faz o upload
+        readGPS(); // Mantém o buffer do GPS vazio para não travar
       }
       dataFile.close();
-      SD.remove("/historico.txt"); // Limpa o cartão após envio bem sucedido
+      
+      SD.remove("/historico.txt"); 
+      Serial.println("[TCP] Sucesso! Transferencia completa. SD Card limpo.");
     }
     tcpClient.stop();
+  } else {
+    Serial.println("[TCP ERRO] Servidor inacessivel! Tentarei novamente mais tarde.");
   }
-  currentState = ONLINE; // Terminou, vai para o tempo real
+  
+  currentState = ONLINE; 
 }
 
 // ==========================================
@@ -287,40 +347,14 @@ void enviarHistoricoTCP() {
 // ==========================================
 void updateLED() {
   uint32_t t = millis();
-  bool ledState = HIGH; // HIGH = Apagado, LOW = Aceso no NodeMCU
+  bool ledState = HIGH; 
 
   switch (currentState) {
-    case BOOT_DELAY:
-      ledState = HIGH; // Apagado
-      break;
-
-    case SEARCHING:
-      // Piscar rápido 4s, parar 1s
-      if (t % 5000 < 4000) {
-        ledState = (t % 200 < 100) ? LOW : HIGH;
-      } else {
-        ledState = HIGH;
-      }
-      break;
-
-    case OFFLINE:
-      if (!hasEverConnected) {
-        // Piscar constantemente
-        ledState = (t % 1000 < 500) ? LOW : HIGH;
-      } else {
-        // Oscilar rápido (Lost connection)
-        ledState = (t % 300 < 150) ? LOW : HIGH;
-      }
-      break;
-
-    case SENDING_HISTORY:
-      ledState = LOW; // Fica Aceso direto enquanto faz o upload do arquivo
-      break;
-
-    case ONLINE:
-      // Oscilando devagar (Heartbeat suave)
-      ledState = (t % 2000 < 1000) ? LOW : HIGH;
-      break;
+    case BOOT_DELAY: ledState = HIGH; break;
+    case SEARCHING: ledState = (t % 5000 < 4000) ? ((t % 200 < 100) ? LOW : HIGH) : HIGH; break;
+    case OFFLINE: ledState = (!hasEverConnected) ? ((t % 1000 < 500) ? LOW : HIGH) : ((t % 300 < 150) ? LOW : HIGH); break;
+    case SENDING_HISTORY: ledState = LOW; break;
+    case ONLINE: ledState = (t % 2000 < 1000) ? LOW : HIGH; break;
   }
   digitalWrite(LED_PIN, ledState);
 }
