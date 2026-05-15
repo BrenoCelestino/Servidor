@@ -2,6 +2,8 @@ import socket
 import json
 import threading
 import time
+import os
+from datetime import datetime
 from flask import Flask, render_template_string
 from flask_socketio import SocketIO
 
@@ -9,18 +11,40 @@ from flask_socketio import SocketIO
 # CONFIGURAÇÕES DO SERVIDOR
 # ==========================================
 HOST_IP = "0.0.0.0"
-UDP_PORT = 8080    # Porta de Telemetria (Tempo Real)
-TCP_PORT = 8081    # Porta de Download do Cartão SD (Histórico)
-WEB_PORT = 5000    # Porta do Dashboard Web
+UDP_PORT = 8080    
+TCP_PORT = 8081    
+WEB_PORT = 5000    
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # ==========================================
+# GERENCIADOR DE DIRETÓRIO HISTÓRICO
+# ==========================================
+HISTORICO_DIR = "Historico"
+if not os.path.exists(HISTORICO_DIR):
+    os.makedirs(HISTORICO_DIR)
+    print(f"[*] Diretório de backup '{HISTORICO_DIR}' criado com sucesso.")
+
+def salvar_linha_historico(timestamp_str, lat, lng, roll, pitch):
+    try:
+        data_parte = timestamp_str.split('T')[0]
+        ano, mes, dia = data_parte.split('-')
+        filename = f"{int(dia):02d}-{int(mes):02d}-{ano}.txt"
+    except:
+        filename = datetime.now().strftime('%d-%m-%Y.txt')
+
+    filepath = os.path.join(HISTORICO_DIR, filename)
+    linha = f"{timestamp_str},{lat:.6f},{lng:.6f},{roll:.2f},{pitch:.2f}"
+    
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(linha + "\n")
+
+# ==========================================
 # BANCO DE DADOS EM MEMÓRIA
 # ==========================================
-trajeto_online = []   # Rota vermelha (Feita enquanto conectado)
-trajeto_offline = []  # Rota azul (Feita enquanto desconectado, lida do SD)
+trajeto_online = []   
+trajeto_offline = []  
 last_packet_time = 0
 current_status = "Aguardando conexão..."
 
@@ -43,11 +67,15 @@ def udp_listener():
             
             lat = telemetria.get('lat', 0.0)
             lng = telemetria.get('lng', 0.0)
+            roll = telemetria.get('roll', 0.0)
+            pitch = telemetria.get('pitch', 0.0)
             
             if lat != 0.0 and lng != 0.0:
                 trajeto_online.append([lat, lng])
 
-            # Envia imediatamente para a interface Web
+            timestamp = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
+            salvar_linha_historico(timestamp, lat, lng, roll, pitch)
+
             socketio.emit('nova_telemetria', telemetria)
 
         except json.JSONDecodeError:
@@ -78,25 +106,29 @@ def tcp_listener():
         finally:
             conn.close()
 
-        # Processa o arquivo CSV recebido (Data, Lat, Lng, Roll, Pitch)
         if buffer:
             linhas = buffer.strip().split('\n')
             novos_pontos = []
             
             for linha in linhas:
                 partes = linha.strip().split(',')
-                if len(partes) >= 3: # Garante que a linha tem no mínimo Hora, Lat e Lng
+                if len(partes) >= 5: 
                     try:
+                        timestamp = partes[0]
                         lat = float(partes[1])
                         lng = float(partes[2])
+                        roll = float(partes[3])
+                        pitch = float(partes[4])
+                        
                         if lat != 0.0 and lng != 0.0:
                             novos_pontos.append([lat, lng])
                             trajeto_offline.append([lat, lng])
+                            
+                        salvar_linha_historico(timestamp, lat, lng, roll, pitch)
                     except ValueError:
                         continue
             
             if novos_pontos:
-                # CORREÇÃO AQUI: Uso de aspas simples para 'apagão'
                 print(f"[*] SUCESSO: {len(novos_pontos)} coordenadas recuperadas do 'apagão'!")
                 socketio.emit('historico_recebido', novos_pontos)
 
@@ -109,7 +141,6 @@ def connection_monitor():
     
     while True:
         socketio.sleep(0.5) 
-        
         if last_packet_time == 0:
             socketio.emit('status_conexao', {'status': "Aguardando...", 'delta': '--'})
             continue
@@ -132,12 +163,41 @@ def connection_monitor():
 
         if new_status != current_status:
             current_status = new_status
-            print(f"\n>> [STATUS]: {current_status} <<\n")
+            socketio.emit('atualizar_lista', obter_lista_historicos())
             
         socketio.emit('status_conexao', {'status': current_status, 'delta': round(delta, 1)})
 
+def obter_lista_historicos():
+    arquivos = [f for f in os.listdir(HISTORICO_DIR) if f.endswith('.txt')]
+    arquivos.sort(reverse=True)
+    return arquivos
+
 # ==========================================
-# FRONTEND HTML + MAPA (DUAS CORES)
+# EVENTOS SOCKET.IO (BACKUP)
+# ==========================================
+@socketio.on('solicitar_lista_historicos')
+def handle_historicos():
+    socketio.emit('atualizar_lista', obter_lista_historicos())
+
+@socketio.on('solicitar_arquivo_historico')
+def handle_arquivo(filename):
+    filepath = os.path.join(HISTORICO_DIR, filename)
+    pontos = []
+    if os.path.exists(filepath):
+        with open(filepath, 'r', encoding='utf-8') as f:
+            for linha in f:
+                partes = linha.strip().split(',')
+                if len(partes) >= 3:
+                    try:
+                        lat = float(partes[1])
+                        lng = float(partes[2])
+                        if lat != 0.0 and lng != 0.0:
+                            pontos.append([lat, lng])
+                    except: pass
+    socketio.emit('historico_arquivo_carregado', pontos)
+
+# ==========================================
+# FRONTEND HTML + MAPA
 # ==========================================
 HTML_PAGE = """
 <!DOCTYPE html>
@@ -148,8 +208,10 @@ HTML_PAGE = """
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         body { margin: 0; padding: 0; font-family: Arial, sans-serif; display: flex; height: 100vh; overflow: hidden; }
-        #map { flex: 1; height: 100%; }
-        #panel { width: 340px; background: #2c3e50; color: white; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; z-index: 10;}
+        #map { flex: 1; height: 100%; z-index: 1;}
+        
+        /* PAINEL LATERAL */
+        #panel { width: 340px; background: #2c3e50; color: white; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; z-index: 10; overflow-y: auto; box-shadow: 2px 0 10px rgba(0,0,0,0.5);}
         h2 { text-align: center; font-size: 1.2rem; margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
         
         #conn-status-box { text-align: center; padding: 15px 10px; border-radius: 6px; margin-bottom: 15px; background: #7f8c8d; color: white; transition: 0.3s;}
@@ -169,11 +231,49 @@ HTML_PAGE = """
         .data-box span { font-weight: bold; color: #1abc9c; font-size: 1.2em; display: block; margin-top: 5px; }
         .alert { background: #e74c3c; padding: 10px; border-radius: 5px; text-align: center; margin-bottom: 15px; display: none; }
         
-        /* Notificação de Recuperação de Dados */
-        #recovery-toast { position: absolute; bottom: 20px; left: 50%; transform: translateX(-50%); background: #2980b9; color: white; padding: 10px 20px; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: none; z-index: 1000;}
+        /* BOTÃO FLUTUANTE (FAB) HISTÓRICO */
+        #btn-fab-history {
+            position: absolute;
+            bottom: 30px;
+            left: 370px; /* 340px do painel + 30px de margem */
+            background: #9b59b6;
+            color: white;
+            border: none;
+            padding: 15px 25px;
+            border-radius: 30px;
+            font-size: 1rem;
+            font-weight: bold;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
+            z-index: 1000;
+            transition: 0.3s;
+        }
+        #btn-fab-history:hover { background: #8e44ad; transform: scale(1.05); }
+        
+        /* POP-UP (MODAL) HISTÓRICO */
+        .modal-overlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); z-index: 2000; justify-content: center; align-items: center;
+        }
+        .modal-content {
+            background: #2c3e50; color: white; padding: 30px; border-radius: 10px;
+            width: 380px; text-align: center; border-top: 6px solid #9b59b6; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+        }
+        .modal-content h3 { margin-top: 0; }
+        .btn-history { width: 100%; margin-top: 10px; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 1rem;}
+        .btn-load { background: #27ae60; color: white; margin-top: 20px;}
+        .btn-load:hover { background: #2ecc71; }
+        .btn-clear { background: #e67e22; color: white; }
+        .btn-clear:hover { background: #d35400; }
+        .btn-close { background: #e74c3c; color: white; margin-top: 20px;}
+        .btn-close:hover { background: #c0392b; }
+        select { width: 100%; padding: 10px; margin-top: 10px; background: #ecf0f1; border-radius: 4px; border: none; font-size: 1rem;}
+        
+        #recovery-toast { position: absolute; bottom: 30px; left: 50%; transform: translateX(-50%); background: #2980b9; color: white; padding: 12px 25px; border-radius: 30px; font-weight: bold; box-shadow: 0 4px 6px rgba(0,0,0,0.3); display: none; z-index: 1000;}
     </style>
 </head>
 <body>
+    <!-- PAINEL LATERAL -->
     <div id="panel">
         <h2>Data Logger</h2>
         <div id="conn-status-box">
@@ -181,6 +281,7 @@ HTML_PAGE = """
             <div id="delta-time">Sinal: -- s</div>
         </div>
         <div id="gps-alert" class="alert">Buscando satélites...</div>
+        
         <div class="data-box">📍 Posição GPS<span id="latlng">0.00, 0.00</span></div>
         <div class="data-box">📡 Satélites (Fix)<span id="sats">0</span></div>
         <div class="data-box">📐 Inércia (Fusão)
@@ -188,15 +289,34 @@ HTML_PAGE = """
             <span>Pitch: <b id="pitch" style="color:#e67e22">0.00°</b></span>
         </div>
         
-        <div style="margin-top:20px; font-size: 0.8em; color: #bdc3c7;">
-            <b>Legenda do Mapa:</b><br>
-            <span style="color:#e74c3c; font-size:1.5em;">■</span> Trajeto Online (Ao vivo)<br>
-            <span style="color:#3498db; font-size:1.5em;">■</span> Trajeto Offline (Recuperado)
+        <div style="margin-top:20px; font-size: 0.85em; color: #bdc3c7;">
+            <b>Legenda do Mapa:</b><br><br>
+            <span style="color:#e74c3c; font-size:1.5em;">■</span> Online (Sessão Ativa)<br>
+            <span style="color:#3498db; font-size:1.5em;">■</span> Offline (Recuperado do SD)<br>
+            <span style="color:#9b59b6; font-size:1.5em;">■</span> Consulta de Backup (Dias)
         </div>
     </div>
 
+    <!-- MAPA E ELEMENTOS FLUTUANTES -->
     <div id="map"></div>
+    <button id="btn-fab-history" onclick="abrirModal()">🗂️ Acessar Backups</button>
     <div id="recovery-toast">📦 Dados offline recuperados do Cartão SD!</div>
+
+    <!-- MODAL (POP-UP) DE BACKUP -->
+    <div id="historico-modal" class="modal-overlay">
+        <div class="modal-content">
+            <h3>🗂️ Banco de Dados (Backup)</h3>
+            <p style="font-size: 0.9rem; color: #bdc3c7;">Selecione um arquivo gravado no servidor para visualizar a rota percorrida neste dia.</p>
+            
+            <select id="select-historico">
+                <option value="">Carregando arquivos...</option>
+            </select>
+            
+            <button class="btn-history btn-load" onclick="carregarHistorico()">Plotar Rota Salva</button>
+            <button class="btn-history btn-clear" onclick="limparHistoricoVisual()">Ocultar Rota</button>
+            <button class="btn-history btn-close" onclick="fecharModal()">Voltar ao Mapa</button>
+        </div>
+    </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
@@ -207,14 +327,63 @@ HTML_PAGE = """
         var marker = null;
         var polyline_online = L.polyline([], {color: '#e74c3c', weight: 4}).addTo(map);
         var polyline_offline = L.polyline([], {color: '#3498db', weight: 4, dashArray: '5, 10'}).addTo(map);
+        var polyline_backup = L.polyline([], {color: '#9b59b6', weight: 5, opacity: 0.8}).addTo(map);
         var primeiraLeituraGps = true;
         var socket = io();
+
+        // CONTROLE DO MODAL
+        function abrirModal() {
+            document.getElementById('historico-modal').style.display = 'flex';
+            socket.emit('solicitar_lista_historicos');
+        }
+        function fecharModal() {
+            document.getElementById('historico-modal').style.display = 'none';
+        }
+
+        // ATUALIZA LISTA DO DROPDOWN
+        socket.on('atualizar_lista', function(arquivos) {
+            var select = document.getElementById('select-historico');
+            select.innerHTML = '';
+            if(arquivos.length === 0){
+                select.innerHTML = '<option value="">Nenhum registro encontrado</option>';
+                return;
+            }
+            arquivos.forEach(function(arq) {
+                var opt = document.createElement('option');
+                opt.value = arq;
+                opt.innerHTML = "📅 Registro: " + arq.replace('.txt', '');
+                select.appendChild(opt);
+            });
+        });
+
+        // AÇÕES DOS BOTÕES DO MODAL
+        function carregarHistorico() {
+            var val = document.getElementById('select-historico').value;
+            if(val) { 
+                socket.emit('solicitar_arquivo_historico', val); 
+                fecharModal(); // Fecha o pop-up para ver o mapa
+            }
+        }
+        function limparHistoricoVisual() {
+            polyline_backup.setLatLngs([]);
+            fecharModal();
+        }
+
+        // DESENHA ROTA DE BACKUP
+        socket.on('historico_arquivo_carregado', function(pontos) {
+            polyline_backup.setLatLngs(pontos);
+            if(pontos.length > 0) {
+                map.fitBounds(polyline_backup.getBounds());
+            } else {
+                alert('Arquivo selecionado está vazio ou não possui fix de GPS válido.');
+            }
+        });
 
         // RECEBE DADOS EM TEMPO REAL (UDP)
         socket.on('nova_telemetria', function(data) {
             document.getElementById('roll').innerText = data.roll + '°';
             document.getElementById('pitch').innerText = data.pitch + '°';
-            document.getElementById('sats').innerText = data.sats;
+            document.getElementById('sats').innerText = data.sats; // INFO SATELITES DE VOLTA!
 
             if (data.lat !== 0.0 && data.lng !== 0.0) {
                 document.getElementById('gps-alert').style.display = 'none';
@@ -226,35 +395,26 @@ HTML_PAGE = """
                     map.setView(latlng, 18); 
                     marker = L.marker(latlng).addTo(map);
                     primeiraLeituraGps = false;
-                } else {
-                    marker.setLatLng(latlng); 
-                }
+                } else { marker.setLatLng(latlng); }
             } else {
                 document.getElementById('gps-alert').style.display = 'block';
             }
         });
 
-        // RECEBE DADOS RECUPERADOS DO CARTÃO SD (TCP)
+        // RECEBE DADOS DO SD (TCP)
         socket.on('historico_recebido', function(pontos) {
-            // Adiciona todos os pontos na linha Azul (Offline)
-            for(var i=0; i<pontos.length; i++){
-                polyline_offline.addLatLng(pontos[i]);
-            }
-            // Enquadra o mapa para mostrar a nova rota inteira
+            for(var i=0; i<pontos.length; i++){ polyline_offline.addLatLng(pontos[i]); }
             map.fitBounds(polyline_offline.getBounds());
-            
-            // Mostra aviso na tela por 4 segundos
             var toast = document.getElementById('recovery-toast');
             toast.style.display = 'block';
             setTimeout(() => { toast.style.display = 'none'; }, 4000);
         });
 
-        // ATUALIZA INTERFACE DO HEARTBEAT
+        // ATUALIZA STATUS DE CONEXÃO
         socket.on('status_conexao', function(data) {
             var box = document.getElementById('conn-status-box');
             document.getElementById('status-text').innerText = data.status;
             document.getElementById('delta-time').innerText = data.delta === '--' ? "Aguardando primeiro pacote" : "Último pacote: " + data.delta + "s atrás";
-            
             box.className = ''; document.getElementById('status-dot').className = 'dot';
             if(data.status === "Conectado") { box.classList.add('status-conectado'); document.getElementById('status-dot').classList.add('pulsing'); }
             else if(data.status === "Pouco Sinal") box.classList.add('status-pouco');
@@ -263,7 +423,7 @@ HTML_PAGE = """
             else if(data.status === "Conexão restabelecida") { box.classList.add('status-restabelecida'); document.getElementById('status-dot').classList.add('pulsing'); }
         });
 
-        // AO ABRIR O NAVEGADOR, CARREGA TUDO QUE JÁ ESTAVA NA MEMÓRIA
+        // AO ABRIR O NAVEGADOR
         socket.on('carregar_trajetos_salvos', function(dados) {
             polyline_online.setLatLngs(dados.online);
             polyline_offline.setLatLngs(dados.offline);

@@ -51,3 +51,14 @@ Status de LED da propria placa:
 - Rodando Desconectado = Osilando Rapido.
 - Rodando Conectado ao Servidor = Oscilando Devagar.
 - Buscando Servidor = Piscar Rapido 4 segundo, parar 1, recomeçar.
+
+-------
+
+O Fluxo do Backup de Historico de Rotas do Servidor:
+- Criar uma pasta na raiz chamada "Historico", se não existir ainda.
+- Criar arquivo txt com dia/mes/ano do registro, sendo um registro por dia, ou seja cada registro salvara apenas seu ciclo do dia que foi criado, 
+quando virar o dia, um novo arquivo com a data seguinte deverar continuar salvando.
+- O arquivo é de backup, podendo ser utilizando no dashboard para visualizar historicos passados, ou seja o modo em tempo real deve continuar 
+funcionando recebendo os dados em tempo real e fazendo a rota pela sessão ativa atual.
+- No dashboard deverar ter um novo botão, no quanto inferior esquerdo que abrirar um pop up, na qual ele irar ler a pasta "Historico", e 
+mostrar lista com todos os historicos salvos, ao escolher um, mostrar toda a rota que deve naquele historico.
