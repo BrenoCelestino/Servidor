@@ -3,62 +3,67 @@ Desenvolver um dispositivo de aquisição de dados (Data Logger) projetado para 
 variáveis dinâmicas no espaço. O foco não é a movimentação, mas a precisão extrema na
 captação, fusão e envio de dados de geolocalização e inércia.
 
-----------------------
+---
+
 Hardware:
-	Placa: Node MCU Amica CP2102
-	IMU: MPU6050
-	Modulo GPS: NEO-6M
-	Modulo SD: (A verificar modulo em espesifico)
-	Botão Para Conexão
+Placa: Node MCU Amica CP2102
+IMU: MPU6050
+Módulo GPS: NEO-6M
+Módulo SD: (A verificar módulo em específico)
+Botão Para Conexão
 
+Fluxo de Dados do Dispositivo:
 
-Fluxo de Dados Dispositivo:
-- Ler Dados Modulo GPS.
-- Ler Dados Modulo IMU.
-- Ler Dados de de data e hora do relógio atômico do Modulo GPS.
-- Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter).
-- Se, o modulo GPS estiver com cobertura de GPS, salvar dados em tempo real, salvando todo historico de dados na memoria SD/CartãoDeMemoria quando não estiver 
-conectado no servidor, fazendo a atualização 1 vez por segundo neste modo, ainda que o sistema ainda não tenha se conectado nenhuma vez no servidor.
-- Esperar 5 segundos antes de tentar iniciar a conexão com servidor para compensar etapa anterior.
-- Se não conseguir se conectar com servidor dentro de 30 segundos, não tentar mais e permanecer no modo desconectado.
-- Voltar a tentar se conectar ao servidor se usuario precionar botão por 2 segundos, nesse caso, permanecer tentando se conectar infinitamente, ao menos que botão seja
-precionado novamente por 2 segundos.
-- Se estiver conectado no Servidor, enviar os dados em tempo real via telemetria (Wi-Fi) para servidor no computador, atualizando 5 vezes por segundo.
--- Espera-se que no fim do fluxo, o dispositivo consiga armazenar dados offiline com dados fusados e com horario em tempo real e enviar em tempo real
+* Ler Dados do Módulo GPS.
+* Ler Dados do Módulo IMU.
+* Ler Dados de data e hora do relógio atômico do Módulo GPS.
+* Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter).
+* Se o módulo GPS estiver com cobertura de GPS, salvar dados em tempo real, salvando todo histórico de dados na memória SD/CartãoDeMemoria quando não estiver
+conectado ao servidor, fazendo a atualização 1 vez por segundo neste modo, ainda que o sistema ainda não tenha se conectado nenhuma vez ao servidor.
+* Esperar 5 segundos antes de tentar iniciar a conexão com o servidor para compensar a etapa anterior.
+* Se não conseguir se conectar com o servidor dentro de 30 segundos, não tentar mais e permanecer no modo desconectado.
+* Voltar a tentar se conectar ao servidor se o usuário pressionar o botão por 2 segundos, nesse caso, permanecer tentando se conectar infinitamente, a menos que o botão seja
+pressionado novamente por 2 segundos.
+* Se estiver conectado ao Servidor, enviar os dados em tempo real via telemetria (Wi-Fi) para o servidor no computador, atualizando 5 vezes por segundo.
+-- Espera-se que no fim do fluxo, o dispositivo consiga armazenar dados offline com dados fusionados e com horário em tempo real e enviar em tempo real
 ao servidor.
 
 Fluxo de Dados no Servidor Computador:
-- Receber dados do Dispositivo.
-- Imprimir em tempo real no Console, dados do GPS, dados do IMU e a Fusão dos Dados.
-- Mostrar em tempo real e plotá-los em um painel interativo no computador utilizando OpenStreetMap e apis livre.
-- Registrar todo o historico, com uma linha desenhada no mapa, do caminho passado pelo qual o rastreador ja passou.
-- Quando o dispositivo for conectado pela primeira vez, ou quando ele voltar de um reconexão, receber os dados que estão sendo salvos na memoria do mesmo
-quando estava desconectado e preencher no historico do mapa desenhado de por onde ele passou quando esta desconectado, de preferencia com uma cor diferente
-de quanto estava conectado.
 
---------------------
+* Receber dados do Dispositivo.
+* Imprimir em tempo real no Console os dados do GPS, dados do IMU e a Fusão dos Dados.
+* Mostrar em tempo real e plotá-los em um painel interativo no computador utilizando OpenStreetMap e APIs livres.
+* Registrar todo o histórico, com uma linha desenhada no mapa, do caminho passado pelo qual o rastreador já passou.
+* Quando o dispositivo for conectado pela primeira vez, ou quando ele voltar de uma reconexão, receber os dados que estão sendo salvos na memória do mesmo
+quando estava desconectado e preencher no histórico do mapa desenhado por onde ele passou quando estava desconectado, de preferência com uma cor diferente
+de quando estava conectado.
+
+---
 
 Resultados Esperados:
-- Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial).
-- Capacidade de recuperar um trajeto executado externamente de forma legível, no caso, recuperar um trajeto que o dispositivo fez quando estava desconectado
+
+* Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial).
+* Capacidade de recuperar um trajeto executado externamente de forma legível, no caso, recuperar um trajeto que o dispositivo fez quando estava desconectado
 do servidor.
-- Transmitir os dados em tempo real e plotá-los em um painel interativo no computador, mostrando posição atual e todo historico passado. Como um google maps/earth.
+* Transmitir os dados em tempo real e plotar em um painel interativo no computador, mostrando posição atual e todo histórico passado. Como um Google Maps/Earth.
 
---------
+---
 
-Status de LED da propria placa:
-- Rodando Desconectado Sem Nunca Ter Se Conectado ao Servidor = Piscar Constantemente.
-- Rodando Desconectado = Osilando Rapido.
-- Rodando Conectado ao Servidor = Oscilando Devagar.
-- Buscando Servidor = Piscar Rapido 4 segundo, parar 1, recomeçar.
+Status de LED da própria placa:
 
--------
+* Rodando Desconectado Sem Nunca Ter Se Conectado ao Servidor = Piscar Constantemente.
+* Rodando Desconectado = Oscilando Rápido.
+* Rodando Conectado ao Servidor = Oscilando Devagar.
+* Buscando Servidor = Piscar Rápido 4 segundos, parar 1, recomeçar.
 
-O Fluxo do Backup de Historico de Rotas do Servidor:
-- Criar uma pasta na raiz chamada "Historico", se não existir ainda.
-- Criar arquivo txt com dia/mes/ano do registro, sendo um registro por dia, ou seja cada registro salvara apenas seu ciclo do dia que foi criado, 
-quando virar o dia, um novo arquivo com a data seguinte deverar continuar salvando.
-- O arquivo é de backup, podendo ser utilizando no dashboard para visualizar historicos passados, ou seja o modo em tempo real deve continuar 
+---
+
+O Fluxo do Backup de Histórico de Rotas do Servidor:
+
+* Criar uma pasta na raiz chamada "Historico", se não existir ainda.
+* Criar arquivo txt com dia/mês/ano do registro, sendo um registro por dia, ou seja, cada registro salvará apenas seu ciclo do dia em que foi criado,
+quando virar o dia, um novo arquivo com a data seguinte deverá continuar salvando.
+* O arquivo é de backup, podendo ser utilizado no dashboard para visualizar históricos passados, ou seja, o modo em tempo real deve continuar
 funcionando recebendo os dados em tempo real e fazendo a rota pela sessão ativa atual.
-- No dashboard deverar ter um novo botão, no quanto inferior esquerdo que abrirar um pop up, na qual ele irar ler a pasta "Historico", e 
-mostrar lista com todos os historicos salvos, ao escolher um, mostrar toda a rota que deve naquele historico.
+* No dashboard deverá ter um novo botão, no canto inferior esquerdo que abrirá um pop-up, no qual ele irá ler a pasta "Historico", e
+mostrar lista com todos os históricos salvos, ao escolher um, mostrar toda a rota que teve naquele histórico.
