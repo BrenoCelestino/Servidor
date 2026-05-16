@@ -4,7 +4,7 @@ import threading
 import time
 import os
 from datetime import datetime
-from flask import Flask, render_template_string
+from flask import Flask, render_template_string, send_from_directory
 from flask_socketio import SocketIO
 
 # ==========================================
@@ -19,7 +19,7 @@ app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 # ==========================================
-# GERENCIADOR DE DIRETÓRIO HISTÓRICO
+# GERENCIADOR DE DIRETÓRIO HISTÓRICO E ARQUIVOS
 # ==========================================
 HISTORICO_DIR = "Historico"
 if not os.path.exists(HISTORICO_DIR):
@@ -173,7 +173,7 @@ def obter_lista_historicos():
     return arquivos
 
 # ==========================================
-# EVENTOS SOCKET.IO (BACKUP)
+# EVENTOS SOCKET.IO E ROTAS WEB
 # ==========================================
 @socketio.on('solicitar_lista_historicos')
 def handle_historicos():
@@ -195,6 +195,11 @@ def handle_arquivo(filename):
                             pontos.append([lat, lng])
                     except: pass
     socketio.emit('historico_arquivo_carregado', pontos)
+
+# Rota para liberar o acesso da página aos arquivos de imagem na pasta "Arquivos"
+@app.route('/Arquivos/<path:filename>')
+def serve_arquivos(filename):
+    return send_from_directory('Arquivos', filename)
 
 # ==========================================
 # FRONTEND HTML + MAPA
@@ -233,20 +238,9 @@ HTML_PAGE = """
         
         /* BOTÃO FLUTUANTE (FAB) HISTÓRICO */
         #btn-fab-history {
-            position: absolute;
-            bottom: 30px;
-            left: 370px; /* 340px do painel + 30px de margem */
-            background: #9b59b6;
-            color: white;
-            border: none;
-            padding: 15px 25px;
-            border-radius: 30px;
-            font-size: 1rem;
-            font-weight: bold;
-            cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.4);
-            z-index: 1000;
-            transition: 0.3s;
+            position: absolute; bottom: 30px; left: 370px; background: #9b59b6; color: white; border: none;
+            padding: 15px 25px; border-radius: 30px; font-size: 1rem; font-weight: bold; cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 1000; transition: 0.3s;
         }
         #btn-fab-history:hover { background: #8e44ad; transform: scale(1.05); }
         
@@ -256,8 +250,8 @@ HTML_PAGE = """
             background: rgba(0,0,0,0.7); z-index: 2000; justify-content: center; align-items: center;
         }
         .modal-content {
-            background: #2c3e50; color: white; padding: 30px; border-radius: 10px;
-            width: 380px; text-align: center; border-top: 6px solid #9b59b6; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+            background: #2c3e50; color: white; padding: 30px; border-radius: 10px; width: 380px; 
+            text-align: center; border-top: 6px solid #9b59b6; box-shadow: 0 10px 25px rgba(0,0,0,0.5);
         }
         .modal-content h3 { margin-top: 0; }
         .btn-history { width: 100%; margin-top: 10px; padding: 12px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; transition: 0.2s; font-size: 1rem;}
@@ -294,6 +288,11 @@ HTML_PAGE = """
             <span style="color:#e74c3c; font-size:1.5em;">■</span> Online (Sessão Ativa)<br>
             <span style="color:#3498db; font-size:1.5em;">■</span> Offline (Recuperado do SD)<br>
             <span style="color:#9b59b6; font-size:1.5em;">■</span> Consulta de Backup (Dias)
+        </div>
+
+        <!-- LOGO DA INSTITUIÇÃO -->
+        <div style="margin-top: 40px; margin-bottom: 20px; text-align: center;">
+            <img src="/Arquivos/horus.png" alt="Laboratório HORUS - IFPB" style="max-width: 90%; height: auto; opacity: 0.8;">
         </div>
     </div>
 
@@ -383,7 +382,7 @@ HTML_PAGE = """
         socket.on('nova_telemetria', function(data) {
             document.getElementById('roll').innerText = data.roll + '°';
             document.getElementById('pitch').innerText = data.pitch + '°';
-            document.getElementById('sats').innerText = data.sats; // INFO SATELITES DE VOLTA!
+            document.getElementById('sats').innerText = data.sats;
 
             if (data.lat !== 0.0 && data.lng !== 0.0) {
                 document.getElementById('gps-alert').style.display = 'none';
