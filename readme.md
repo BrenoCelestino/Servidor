@@ -1,97 +1,94 @@
-# 🚀 Data Logger Espacial: Rastreador GPS + IMU
+# 🚀 Data Logger Espacial: Rastreador GPS + IMU com *Store & Forward*
 
-Um sistema profissional de telemetria e aquisição de dados espaciais (Data Logger) com arquitetura **Store and Forward**. Desenvolvido para o monitoramento de variáveis dinâmicas com foco na captação precisa e fundida de geolocalização (GPS) e inércia (Acelerômetro/Giroscópio), capaz de recuperar trajetos perdidos em áreas sem cobertura de rede.
+Um sistema de engenharia e telemetria para aquisição de dados espaciais focado em extrema precisão. Utiliza fusão de sensores local (Filtro de Kalman) e conta com uma arquitetura avançada de **Store and Forward**, capaz de atuar como "Caixa Preta" durante perdas de sinal e sincronizar trajetos retroativos com precisão de relógio atômico.
 
-## 📋 Visão Geral do Sistema
+## ✨ Principais Funcionalidades
 
-O projeto é dividido em duas frentes atuando simultaneamente:
-1. **Hardware Edge (Dispositivo):** Processa atitudes inerciais localmente através de um **Filtro de Kalman**, monitora a cobertura satelital e gere seu estado de rede. Se estiver sem conexão Wi-Fi, atua como uma "Caixa Preta", salvando dados sincronizados via relógio atômico em um Cartão SD.
-2. **Servidor Base (Dashboard):** Um servidor assíncrono Multi-thread Python que recebe telemetria ao vivo via **UDP** e faz o download de históricos retidos via **TCP**. Conta com um painel interativo (Leaflet/OpenStreetMap) que desenha duas rotas: online (em tempo real) e offline (backfill retroativo).
+*   **Processamento na Borda (Edge Computing):** O Filtro de Kalman é processado diretamente no ESP8266 a 100Hz, fundindo dados de aceleração e giroscópio sem sobrecarregar a rede.
+*   **Dual-Protocol Network:** Telemetria ao vivo via **UDP** (sem gargalos) e despejo de histórico recuperado via **TCP** (garantia de entrega).
+*   **Store and Forward (Caixa Preta):** Ao perder conexão, salva dados no Cartão SD a 1Hz. Ao reconectar, descarrega e preenche o "apagão" no mapa base.
+*   **Banco de Dados Perpétuo:** O servidor Python espelha e mescla automaticamente os dados recebidos (online e atrasados) em arquivos TXT diários na pasta `Historico`.
+*   **Dashboard Interativo UI/UX:** Painel web dark-mode com acompanhamento instantâneo e um Pop-up flutuante para auditoria de viagens do passado.
 
 ---
 
-## 🛠️ Hardware Utilizado e Diagrama de Ligações
+## 🛠️ Hardware e Diagrama de Ligações (Wiring)
 
-*   **Placa Controladora:** NodeMCU ESP8266 (Amica CP2102)
-*   **Módulo GPS:** Ublox NEO-6M
-*   **IMU (Unidade de Medida Inercial):** MPU6050
-*   **Armazenamento:** Módulo Leitor de Cartão Micro SD (Interface SPI)
-*   **Controle:** Botão Push Button (Normalmente Aberto)
+Para manter o projeto industrialmente enxuto, **não utilizamos LEDs externos ou buzzers**. Toda a sinalização visual é feita pelo LED onboard do ESP8266, e os conflitos de barramento (SPI) foram resolvidos com o mapeamento abaixo:
 
-### Tabela de Pinagem (Wiring)
+*   **Controladora:** NodeMCU ESP8266 (Amica CP2102)
+*   **GPS:** Ublox NEO-6M
+*   **IMU:** MPU6050
+*   **Armazenamento:** Módulo Leitor de Cartão Micro SD (SPI)
+*   **Controle:** Botão Push Button Simples
 
-| Componente | Pino do Módulo | Pino NodeMCU | Notas Importantes |
+| Componente | Pino do Módulo | Pino NodeMCU | Notas de Engenharia |
 | :--- | :--- | :--- | :--- |
 | **MPU6050** | VCC / GND | 3V3 / GND | Barramento I2C Padrão |
-| | SCL | **D1** (GPIO5) | |
-| | SDA | **D2** (GPIO4) | |
-| **Cartão SD** | VCC / GND | Vin(5V) / GND | Barramento SPI Padrão |
-| | MISO | **D6** (GPIO12) | |
-| | MOSI | **D7** (GPIO13) | |
-| | SCK | **D5** (GPIO14) | |
-| | CS | **D0** (GPIO16) | *Alocado no D0 para evitar falhas de Boot no ESP8266* |
-| **NEO-6M GPS** | VCC / GND | 3V3 / GND | Usar 5V (Vin) se o módulo exigir |
-| | TX | **D3** (GPIO0) | O NodeMCU apenas "escuta" o GPS |
-| | RX | Desconectado | Não há necessidade de escrita no módulo |
-| **Botão (Push)** | Terminal 1 | **D8** (GPIO15) | O D8 possui pull-down nativo (GND) |
-| | Terminal 2 | **3V3** | Ativa a porta com nível Lógico HIGH ao apertar |
+| | SCL / SDA | **D1** / **D2** | |
+| **Cartão SD** | VCC / GND | Vin(5V) / GND | Módulos SD operam melhor em 5V |
+| | MISO / MOSI | **D6** / **D7** | Barramento SPI |
+| | SCK | **D5** | Barramento SPI |
+| | CS (Chip Select) | **D0** (GPIO16) | *Alocado no D0 para evitar falha de Boot no ESP* |
+| **GPS NEO-6M** | VCC / GND | 3V3 / GND | |
+| | TX | **D3** (GPIO0) | *O NodeMCU apenas escuta o GPS (1 via)* |
+| **Botão (Override)**| Terminal 1 e 2 | **D8** ➔ **3V3** | *O D8 possui pull-down nativo (Não precisa resistor)* |
 
 ---
 
-## 🧠 Lógica de Estados e Sinais Visuais (LED Onboard)
+## 🧠 Máquina de Estados e Interface Onboard (LED)
 
-O dispositivo **não utiliza LEDs externos**. Toda a comunicação visual com o operador é feita através do minúsculo **LED azul embutido** na placa NodeMCU (ligado ao GPIO2), operando como um painel de diagnóstico em tempo real:
+O LED Azul embutido atua como diagnóstico do sistema:
 
-| Estado do Dispositivo | Padrão Visual do LED Onboard | Significado |
+| Estado da Máquina | Padrão do LED Onboard | Ação Ocorrendo |
 | :--- | :--- | :--- |
-| **Boot Delay** | 🌑 Totalmente Apagado | Pausa de 5 segundos ao ligar. Aguardando estabilização elétrica do IMU e da antena do GPS. |
-| **Buscando Rede** | ⚡ Piscar rápido 4s, apaga 1s | Procurando a rede Wi-Fi configurada. Possui timeout de 30 segundos para poupar bateria. |
-| **Offline (Nunca conectou)** | 🔄 Pisca Constantemente (1Hz) | Caiu no timeout sem achar servidor. Operando como gravação cega no Cartão SD (se houver fix de satélite). |
-| **Offline (Perdeu conexão)**| ⚠️ Oscilação Rápida (Estroboscópio) | A conexão existia, mas caiu. Dispositivo ativou gravação de emergência no Cartão SD. |
-| **Enviando Histórico** | 🔵 Totalmente Aceso | Restaurou rede e encontrou arquivo no SD. Fazendo upload TCP para o servidor. |
-| **Online (Telemetria)** | 🫀 Pulso Lento (Heartbeat) | Operação Normal. Enviando dados a 5 vezes por segundo para o dashboard. |
+| **Boot Delay** | 🌑 Apagado | Delay de 5s. Estabilizando tensão do GPS/IMU. |
+| **Buscando Rede** | ⚡ Pisca rápido (4s), Apaga (1s) | Tentando conectar. Timeout automático de 30 segundos. |
+| **Offline (S/ Histórico)** | 🔄 Pisca Constantemente (1Hz) | Modo economia. Gravando no SD se houver fix satelital. |
+| **Offline (Caiu a rede)** | ⚠️ Oscilação Rápida (Strobe) | Caiu a rede durante a missão. Gravando no SD. |
+| **Enviando SD** | 🔵 Totalmente Aceso | Restaurou conexão. Despejando SD via TCP para o Python. |
+| **Online (Ao Vivo)** | 🫀 Pulso Lento (Heartbeat) | Enviando telemetria em tempo real a 5Hz (UDP). |
 
-### Função do Botão (Override)
-Se o dispositivo passar de 30 segundos procurando rede, ele "desiste" e entra em modo economia de energia (Offline).
-*   **Pressionar por 2 Segundos:** Força o dispositivo a ligar a antena e procurar a rede infinitamente até conectar (Ideal para descarregar dados ao voltar para a base). Pressionar novamente cancela o comando.
+**🔘 Override Manual (Botão D8):** Segurar por 2 segundos inverte a regra do Timeout de 30s, forçando o dispositivo a procurar a base Wi-Fi infinitamente até achar (ideal ao retornar para a base de operações).
 
 ---
 
-## 💻 Instruções de Instalação e Execução
+## 💻 Servidor Python e Dashboard Interativo
 
-### Passo 1: Preparando o Servidor Python (Computador)
-1. Instale o Python 3 na sua máquina.
-2. Abra o terminal e instale as dependências:
+O Servidor Base é uma aplicação Flask Assíncrona Multi-thread que atua em três frentes: Escuta UDP, Escuta TCP e WebSockets para a Interface.
+
+### Legenda Dinâmica do Mapa:
+*   🟥 **Linha Vermelha:** Rota Online (Desenhada ao vivo a 5Hz via UDP).
+*   🟦 **Linha Azul Pontilhada:** Rota Recuperada (Buracos de sinal preenchidos pelo TCP após reconexão).
+*   🟪 **Linha Roxa (Backup):** Rota do Banco de Dados (Gerada ao consultar um registro do passado no Pop-up).
+
+### Como Iniciar o Sistema
+
+#### 1. Computador / Celular Base (Servidor)
+1. Instale as bibliotecas necessárias:
    ```bash
    pip install flask flask-socketio
    ```
-3. Execute o servidor:
+2. Execute o servidor:
    ```bash
    python servidor.py
    ```
-4. O terminal exibirá `🚀 SERVIDOR DE TELEMETRIA ESPACIAL INICIADO!`.
-5. Abra o navegador e acesse: `http://localhost:5000`
+3. Acesse o painel pelo navegador: `http://localhost:5000`.
 
-### Passo 2: Preparando o Hardware (Arduino IDE)
-1. Conecte o NodeMCU ao computador via USB.
-2. Na Arduino IDE, instale o pacote de placas `ESP8266 by ESP8266 Community`.
-3. Instale a biblioteca `TinyGPSPlus` (por Mikal Hart) através do Gerenciador de Bibliotecas.
-4. Abra o arquivo `DataLogger_Espacial.ino` e altere as **três variáveis principais** no topo do código:
+#### 2. Hardware (Arduino IDE)
+1. Conecte o NodeMCU, abra a IDE a 115200 baud.
+2. Instale a biblioteca `TinyGPSPlus`.
+3. No arquivo `DataLogger_Espacial.ino`, configure sua rede:
    ```cpp
-   const char* ssid = "NOME_DA_SUA_REDE_WIFI";
-   const char* password = "SENHA_DA_SUA_REDE";
-   const char* serverIP = "192.168.1.100"; // Substitua pelo IP local do seu Computador
+   const char* ssid = "NOME_DO_WIFI_OU_HOTSPOT";
+   const char* password = "SENHA";
+   const char* serverIP = "192.168.X.X"; // IP do computador ou celular rodando o Python
    ```
-5. Faça o upload do código para a placa.
+4. Faça o Upload. O Monitor Serial possui um Console Completo detalhando todas as mudanças de modo, 100% legível.
 
 ---
 
-## ⚙️ Fluxo de Dados e Arquitetura de Rede
+## 🗂️ Gestão de Histórico (Auditoria de Rotas)
+Toda a operação (seja via pacote UDP ao vivo ou via pacote TCP recuperado) é mesclada e salva no computador dentro da pasta `Historico`, organizada por arquivos diários (Ex: `15-05-2026.txt`). 
 
-Este sistema utiliza duas vias de rede distintas para garantir eficiência máxima:
-
-1. **Tempo Real (A Via UDP - Porta 8080):** 
-   Quando online, a placa envia a inércia fundida e o GPS **5 vezes por segundo**. O protocolo UDP foi escolhido pois não exige verificação de entrega, impedindo que o Filtro de Kalman ou a porta serial engarrafem. No painel, esse trajeto desenha a **linha Vermelha Contínua**.
-   
-2. **Backfill de Histórico (A Via TCP - Porta 8081):**
-   Ao conectar (ou reconectar), a placa verifica a existência do arquivo `/historico.txt` no Cartão SD. Caso exista, a placa suspende a telemetria ao vivo e abre uma conexão robusta **TCP**. O arquivo é descarregado 100% no servidor, apagado do SD, e o servidor desenha uma **linha Azul Pontilhada** retroativa no mapa usando a "hora atômica" capturada pelo satélite no momento exato do apagão.
+No canto inferior do mapa, há um botão flutuante **(🗂️ Acessar Backups)**. Ao clicar, o cenário escurece, um Modal de seleção se abre e você pode carregar missões do passado para avaliar a eficiência geométrica das rotas com um *zoom fit* automático!
