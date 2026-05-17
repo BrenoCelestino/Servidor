@@ -17,9 +17,9 @@
 // ==========================================
 // REDE E SERVIDORES
 // ==========================================
-const char* ssid = "NOME_DA_SUA_REDE_WIFI";
-const char* password = "SENHA_DA_SUA_REDE";
-const char* serverIP = "192.168.1.100"; // IP do Servidor Python / Celular
+const char* ssid = "iotgps";
+const char* password = "12345678";
+const char* serverIP = "192.168.137.1"; // IP do Servidor Python / Celular
 const int udpPort = 8080;               // Porta para Telemetria Tempo Real
 const int tcpPort = 8081;               // Porta para Despejo do Histórico (SD)
 

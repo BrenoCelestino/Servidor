@@ -11,9 +11,9 @@ from flask_socketio import SocketIO
 # CONFIGURAÇÕES DO SERVIDOR
 # ==========================================
 HOST_IP = "0.0.0.0"
-UDP_PORT = 8080    
-TCP_PORT = 8081    
-WEB_PORT = 5000    
+UDP_PORT = 8080
+TCP_PORT = 8081
+WEB_PORT = 5000
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -24,7 +24,6 @@ socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 HISTORICO_DIR = "Historico"
 if not os.path.exists(HISTORICO_DIR):
     os.makedirs(HISTORICO_DIR)
-    print(f"[*] Diretório de backup '{HISTORICO_DIR}' criado com sucesso.")
 
 def salvar_linha_historico(timestamp_str, lat, lng, roll, pitch):
     try:
@@ -92,8 +91,6 @@ def tcp_listener():
 
     while True:
         conn, addr = sock.accept()
-        print(f"\n[+] Conexão TCP de {addr[0]}! Iniciando download do histórico...")
-        
         buffer = ""
         try:
             while True:
@@ -102,7 +99,7 @@ def tcp_listener():
                     break
                 buffer += data.decode('utf-8')
         except Exception as e:
-            print(f"[!] Erro no download do SD: {e}")
+            pass
         finally:
             conn.close()
 
@@ -129,7 +126,6 @@ def tcp_listener():
                         continue
             
             if novos_pontos:
-                print(f"[*] SUCESSO: {len(novos_pontos)} coordenadas recuperadas do 'apagão'!")
                 socketio.emit('historico_recebido', novos_pontos)
 
 # ==========================================
@@ -196,7 +192,6 @@ def handle_arquivo(filename):
                     except: pass
     socketio.emit('historico_arquivo_carregado', pontos)
 
-# Rota para liberar o acesso da página aos arquivos de imagem na pasta "Arquivos"
 @app.route('/Arquivos/<path:filename>')
 def serve_arquivos(filename):
     return send_from_directory('Arquivos', filename)
@@ -216,9 +211,16 @@ HTML_PAGE = """
         #map { flex: 1; height: 100%; z-index: 1;}
         
         /* PAINEL LATERAL */
-        #panel { width: 340px; background: #2c3e50; color: white; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; z-index: 10; overflow-y: auto; box-shadow: 2px 0 10px rgba(0,0,0,0.5);}
+        #panel { position: relative; width: 340px; background: #2c3e50; color: white; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; z-index: 10; overflow-y: hidden; box-shadow: 2px 0 10px rgba(0,0,0,0.5); transition: 0.3s;}
         h2 { text-align: center; font-size: 1.2rem; margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
         
+        /* BOTÃO DE COLAPSAR (SETINHA) NO PAINEL - Menor e no cantinho */
+        #btn-collapse {
+            position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.15); border: none; color: rgba(255,255,255,0.6); 
+            padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; transition: 0.3s; z-index: 100;
+        }
+        #btn-collapse:hover { background: rgba(0,0,0,0.8); color: white; transform: scale(1.1); }
+
         #conn-status-box { text-align: center; padding: 15px 10px; border-radius: 6px; margin-bottom: 15px; background: #7f8c8d; color: white; transition: 0.3s;}
         .status-header { display: flex; align-items: center; justify-content: center; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
         .dot { height: 12px; width: 12px; border-radius: 50%; display: inline-block; margin-right: 8px; background-color: #fff; }
@@ -240,10 +242,36 @@ HTML_PAGE = """
         #btn-fab-history {
             position: absolute; bottom: 30px; left: 370px; background: #9b59b6; color: white; border: none;
             padding: 15px 25px; border-radius: 30px; font-size: 1rem; font-weight: bold; cursor: pointer;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 1000; transition: 0.3s;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4); z-index: 1000; transition: left 0.4s ease, transform 0.3s;
         }
         #btn-fab-history:hover { background: #8e44ad; transform: scale(1.05); }
         
+        /* OVERLAYS DO MODO COMPACTO (SUSPENSOS SOBRE O MAPA) */
+        #btn-expand {
+            display: none; position: absolute; top: 90px; left: 10px; z-index: 1000; background: #2c3e50; color: white; 
+            border: none; padding: 6px 12px; border-radius: 6px; cursor: pointer; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-size: 0.9rem; transition: 0.3s;
+        }
+        #btn-expand:hover { background: #34495e; transform: scale(1.05); }
+
+        #compact-overlay {
+            display: none; position: absolute; top: 15px; left: 60px; z-index: 1000; gap: 15px; pointer-events: none;
+        }
+        .compact-box {
+            background: #2c3e50; color: white; padding: 10px 20px; border-radius: 30px; font-weight: bold; font-size: 0.95rem;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.4); display: flex; align-items: center; gap: 8px; pointer-events: auto;
+        }
+        .c-conectado { background: #27ae60 !important; }
+        .c-pouco { background: #f39c12 !important; }
+        .c-perdendo { background: #e67e22 !important; }
+        .c-perdida { background: #c0392b !important; }
+        .c-restabelecida { background: #2980b9 !important; }
+
+        /* REGRAS DO MODO COMPACTO (BODY) */
+        body.compact-mode #panel { display: none; }
+        body.compact-mode #btn-expand { display: block; }
+        body.compact-mode #compact-overlay { display: flex; }
+        body.compact-mode #btn-fab-history { left: 20px; } 
+
         /* POP-UP (MODAL) HISTÓRICO */
         .modal-overlay {
             display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -267,7 +295,16 @@ HTML_PAGE = """
     </style>
 </head>
 <body>
-    <!-- PAINEL LATERAL -->
+    <!-- BOTÃO PARA REABRIR O PAINEL (Só aparece no modo compacto, logo abaixo do zoom Leaflet) -->
+    <button id="btn-expand" onclick="toggleCompactMode()" title="Expandir Painel">▶</button>
+
+    <!-- OVERLAYS DO MODO COMPACTO -->
+    <div id="compact-overlay">
+        <div class="compact-box">📍 <span id="compact-latlng">0.00000, 0.00000</span></div>
+        <div id="compact-status" class="compact-box">Aguardando...</div>
+    </div>
+
+    <!-- PAINEL LATERAL COMPLETO -->
     <div id="panel">
         <h2>Data Logger</h2>
         <div id="conn-status-box">
@@ -290,10 +327,13 @@ HTML_PAGE = """
             <span style="color:#9b59b6; font-size:1.5em;">■</span> Consulta de Backup (Dias)
         </div>
 
-        <!-- LOGO DA INSTITUIÇÃO -->
-        <div style="margin-top: 40px; margin-bottom: 20px; text-align: center;">
+        <!-- MUDANÇA AQUI: Flexbox garantindo o centro perfeito da logo HORUS/IFPB -->
+        <div style="margin-top: auto; width: 100%; display: flex; justify-content: center; align-items: center; padding-top: 20px; margin-bottom: 25px;">
             <img src="/Arquivos/horus.png" alt="Laboratório HORUS - IFPB" style="max-width: 90%; height: auto; opacity: 0.8;">
         </div>
+
+        <!-- SETINHA DE COLAPSAR (Canto Inferior Direito do Painel) -->
+        <button id="btn-collapse" onclick="toggleCompactMode()" title="Modo Compacto">◀</button>
     </div>
 
     <!-- MAPA E ELEMENTOS FLUTUANTES -->
@@ -330,16 +370,19 @@ HTML_PAGE = """
         var primeiraLeituraGps = true;
         var socket = io();
 
-        // CONTROLE DO MODAL
+        // CONTROLE DO MODO COMPACTO
+        function toggleCompactMode() {
+            document.body.classList.toggle('compact-mode');
+            setTimeout(function() { map.invalidateSize(); }, 300);
+        }
+
+        // CONTROLE DO MODAL DE HISTÓRICO
         function abrirModal() {
             document.getElementById('historico-modal').style.display = 'flex';
             socket.emit('solicitar_lista_historicos');
         }
-        function fecharModal() {
-            document.getElementById('historico-modal').style.display = 'none';
-        }
+        function fecharModal() { document.getElementById('historico-modal').style.display = 'none'; }
 
-        // ATUALIZA LISTA DO DROPDOWN
         socket.on('atualizar_lista', function(arquivos) {
             var select = document.getElementById('select-historico');
             select.innerHTML = '';
@@ -355,27 +398,16 @@ HTML_PAGE = """
             });
         });
 
-        // AÇÕES DOS BOTÕES DO MODAL
         function carregarHistorico() {
             var val = document.getElementById('select-historico').value;
-            if(val) { 
-                socket.emit('solicitar_arquivo_historico', val); 
-                fecharModal(); // Fecha o pop-up para ver o mapa
-            }
+            if(val) { socket.emit('solicitar_arquivo_historico', val); fecharModal(); }
         }
-        function limparHistoricoVisual() {
-            polyline_backup.setLatLngs([]);
-            fecharModal();
-        }
+        function limparHistoricoVisual() { polyline_backup.setLatLngs([]); fecharModal(); }
 
-        // DESENHA ROTA DE BACKUP
         socket.on('historico_arquivo_carregado', function(pontos) {
             polyline_backup.setLatLngs(pontos);
-            if(pontos.length > 0) {
-                map.fitBounds(polyline_backup.getBounds());
-            } else {
-                alert('Arquivo selecionado está vazio ou não possui fix de GPS válido.');
-            }
+            if(pontos.length > 0) map.fitBounds(polyline_backup.getBounds());
+            else alert('Arquivo selecionado está vazio ou não possui fix de GPS válido.');
         });
 
         // RECEBE DADOS EM TEMPO REAL (UDP)
@@ -386,7 +418,11 @@ HTML_PAGE = """
 
             if (data.lat !== 0.0 && data.lng !== 0.0) {
                 document.getElementById('gps-alert').style.display = 'none';
-                document.getElementById('latlng').innerText = data.lat.toFixed(5) + ', ' + data.lng.toFixed(5);
+                
+                var coordText = data.lat.toFixed(5) + ', ' + data.lng.toFixed(5);
+                document.getElementById('latlng').innerText = coordText;
+                document.getElementById('compact-latlng').innerText = coordText;
+
                 var latlng = [data.lat, data.lng];
                 polyline_online.addLatLng(latlng);
 
@@ -412,17 +448,28 @@ HTML_PAGE = """
         // ATUALIZA STATUS DE CONEXÃO
         socket.on('status_conexao', function(data) {
             var box = document.getElementById('conn-status-box');
+            var compactBox = document.getElementById('compact-status');
+            
             document.getElementById('status-text').innerText = data.status;
             document.getElementById('delta-time').innerText = data.delta === '--' ? "Aguardando primeiro pacote" : "Último pacote: " + data.delta + "s atrás";
             box.className = ''; document.getElementById('status-dot').className = 'dot';
-            if(data.status === "Conectado") { box.classList.add('status-conectado'); document.getElementById('status-dot').classList.add('pulsing'); }
-            else if(data.status === "Pouco Sinal") box.classList.add('status-pouco');
-            else if(data.status === "Perdendo Sinal") box.classList.add('status-perdendo');
-            else if(data.status === "Conexão Perdida") box.classList.add('status-perdida');
-            else if(data.status === "Conexão restabelecida") { box.classList.add('status-restabelecida'); document.getElementById('status-dot').classList.add('pulsing'); }
+            
+            compactBox.innerText = data.status;
+            compactBox.className = 'compact-box'; 
+
+            if(data.status === "Conectado") { 
+                box.classList.add('status-conectado'); document.getElementById('status-dot').classList.add('pulsing');
+                compactBox.classList.add('c-conectado');
+            }
+            else if(data.status === "Pouco Sinal") { box.classList.add('status-pouco'); compactBox.classList.add('c-pouco'); }
+            else if(data.status === "Perdendo Sinal") { box.classList.add('status-perdendo'); compactBox.classList.add('c-perdendo'); }
+            else if(data.status === "Conexão Perdida") { box.classList.add('status-perdida'); compactBox.classList.add('c-perdida'); }
+            else if(data.status === "Conexão restabelecida") { 
+                box.classList.add('status-restabelecida'); document.getElementById('status-dot').classList.add('pulsing');
+                compactBox.classList.add('c-restabelecida');
+            }
         });
 
-        // AO ABRIR O NAVEGADOR
         socket.on('carregar_trajetos_salvos', function(dados) {
             polyline_online.setLatLngs(dados.online);
             polyline_offline.setLatLngs(dados.offline);
