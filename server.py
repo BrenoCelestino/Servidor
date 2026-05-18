@@ -11,9 +11,9 @@ from flask_socketio import SocketIO
 # CONFIGURAÇÕES DO SERVIDOR
 # ==========================================
 HOST_IP = "0.0.0.0"
-UDP_PORT = 8080
-TCP_PORT = 8081
-WEB_PORT = 5000
+UDP_PORT = 8080    
+TCP_PORT = 8081    
+WEB_PORT = 5000    
 
 app = Flask(__name__)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
@@ -81,13 +81,13 @@ def udp_listener():
             pass
 
 # ==========================================
-# THREAD 2: RECEPTOR TCP (HISTÓRICO DO SD)
+# THREAD 2: RECEPTOR TCP (HISTÓRICO DA RAM)
 # ==========================================
 def tcp_listener():
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind((HOST_IP, TCP_PORT))
     sock.listen(5)
-    print(f"[*] [TCP] Servidor aguardando download do Cartão SD na porta {TCP_PORT}...")
+    print(f"[*] [TCP] Servidor aguardando download da Memória RAM na porta {TCP_PORT}...")
 
     while True:
         conn, addr = sock.accept()
@@ -214,7 +214,7 @@ HTML_PAGE = """
         #panel { position: relative; width: 340px; background: #2c3e50; color: white; padding: 20px; box-sizing: border-box; display: flex; flex-direction: column; z-index: 10; overflow-y: hidden; box-shadow: 2px 0 10px rgba(0,0,0,0.5); transition: 0.3s;}
         h2 { text-align: center; font-size: 1.2rem; margin-top: 0; border-bottom: 1px solid #34495e; padding-bottom: 10px; }
         
-        /* BOTÃO DE COLAPSAR (SETINHA) NO PAINEL - Menor e no cantinho */
+        /* BOTÃO DE COLAPSAR (SETINHA) NO PAINEL */
         #btn-collapse {
             position: absolute; bottom: 5px; right: 5px; background: rgba(0,0,0,0.15); border: none; color: rgba(255,255,255,0.6); 
             padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; transition: 0.3s; z-index: 100;
@@ -295,16 +295,13 @@ HTML_PAGE = """
     </style>
 </head>
 <body>
-    <!-- BOTÃO PARA REABRIR O PAINEL (Só aparece no modo compacto, logo abaixo do zoom Leaflet) -->
     <button id="btn-expand" onclick="toggleCompactMode()" title="Expandir Painel">▶</button>
 
-    <!-- OVERLAYS DO MODO COMPACTO -->
     <div id="compact-overlay">
         <div class="compact-box">📍 <span id="compact-latlng">0.00000, 0.00000</span></div>
         <div id="compact-status" class="compact-box">Aguardando...</div>
     </div>
 
-    <!-- PAINEL LATERAL COMPLETO -->
     <div id="panel">
         <h2>Data Logger</h2>
         <div id="conn-status-box">
@@ -323,25 +320,21 @@ HTML_PAGE = """
         <div style="margin-top:20px; font-size: 0.85em; color: #bdc3c7;">
             <b>Legenda do Mapa:</b><br><br>
             <span style="color:#e74c3c; font-size:1.5em;">■</span> Online (Sessão Ativa)<br>
-            <span style="color:#3498db; font-size:1.5em;">■</span> Offline (Recuperado do SD)<br>
+            <span style="color:#3498db; font-size:1.5em;">■</span> Offline (Recuperado da Memória)<br>
             <span style="color:#9b59b6; font-size:1.5em;">■</span> Consulta de Backup (Dias)
         </div>
 
-        <!-- MUDANÇA AQUI: Flexbox garantindo o centro perfeito da logo HORUS/IFPB -->
         <div style="margin-top: auto; width: 100%; display: flex; justify-content: center; align-items: center; padding-top: 20px; margin-bottom: 25px;">
             <img src="/Arquivos/horus.png" alt="Laboratório HORUS - IFPB" style="max-width: 90%; height: auto; opacity: 0.8;">
         </div>
 
-        <!-- SETINHA DE COLAPSAR (Canto Inferior Direito do Painel) -->
         <button id="btn-collapse" onclick="toggleCompactMode()" title="Modo Compacto">◀</button>
     </div>
 
-    <!-- MAPA E ELEMENTOS FLUTUANTES -->
     <div id="map"></div>
     <button id="btn-fab-history" onclick="abrirModal()">🗂️ Acessar Backups</button>
-    <div id="recovery-toast">📦 Dados offline recuperados do Cartão SD!</div>
+    <div id="recovery-toast">📦 Dados offline sincronizados da Memória RAM!</div>
 
-    <!-- MODAL (POP-UP) DE BACKUP -->
     <div id="historico-modal" class="modal-overlay">
         <div class="modal-content">
             <h3>🗂️ Banco de Dados (Backup)</h3>
@@ -370,13 +363,11 @@ HTML_PAGE = """
         var primeiraLeituraGps = true;
         var socket = io();
 
-        // CONTROLE DO MODO COMPACTO
         function toggleCompactMode() {
             document.body.classList.toggle('compact-mode');
             setTimeout(function() { map.invalidateSize(); }, 300);
         }
 
-        // CONTROLE DO MODAL DE HISTÓRICO
         function abrirModal() {
             document.getElementById('historico-modal').style.display = 'flex';
             socket.emit('solicitar_lista_historicos');
@@ -410,7 +401,6 @@ HTML_PAGE = """
             else alert('Arquivo selecionado está vazio ou não possui fix de GPS válido.');
         });
 
-        // RECEBE DADOS EM TEMPO REAL (UDP)
         socket.on('nova_telemetria', function(data) {
             document.getElementById('roll').innerText = data.roll + '°';
             document.getElementById('pitch').innerText = data.pitch + '°';
@@ -436,7 +426,6 @@ HTML_PAGE = """
             }
         });
 
-        // RECEBE DADOS DO SD (TCP)
         socket.on('historico_recebido', function(pontos) {
             for(var i=0; i<pontos.length; i++){ polyline_offline.addLatLng(pontos[i]); }
             map.fitBounds(polyline_offline.getBounds());
@@ -445,7 +434,6 @@ HTML_PAGE = """
             setTimeout(() => { toast.style.display = 'none'; }, 4000);
         });
 
-        // ATUALIZA STATUS DE CONEXÃO
         socket.on('status_conexao', function(data) {
             var box = document.getElementById('conn-status-box');
             var compactBox = document.getElementById('compact-status');

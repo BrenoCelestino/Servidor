@@ -6,10 +6,9 @@ captação, fusão e envio de dados de geolocalização e inércia.
 ---
 
 Hardware:
-Placa: Node MCU Amica CP2102
+Placa: ESP-32
 IMU: MPU6050
 Módulo GPS: NEO-6M
-Módulo SD: (A verificar módulo em específico)
 Botão Para Conexão
 
 Fluxo de Dados do Dispositivo:
@@ -18,8 +17,7 @@ Fluxo de Dados do Dispositivo:
 * Ler Dados do Módulo IMU.
 * Ler Dados de data e hora do relógio atômico do Módulo GPS.
 * Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter).
-* Se o módulo GPS estiver com cobertura de GPS, salvar dados em tempo real, salvando todo histórico de dados na memória SD/CartãoDeMemoria quando não estiver
-conectado ao servidor, fazendo a atualização 1 vez por segundo neste modo, ainda que o sistema ainda não tenha se conectado nenhuma vez ao servidor.
+* Se o módulo GPS estiver com cobertura de GPS, salvar dados em tempo real, salvando todo histórico de dados na memória RAM quando não estiver conectado ao servidor, fazendo a atualização 1 vez a cada 2 segundos neste modo, ainda que o sistema ainda não tenha se conectado nenhuma vez ao servidor, quando memoria encher liberar espaço apagando registro mais antigo para salvar o novo.
 * Esperar 5 segundos antes de tentar iniciar a conexão com o servidor para compensar a etapa anterior.
 * Se não conseguir se conectar com o servidor dentro de 30 segundos, não tentar mais e permanecer no modo desconectado.
 * Voltar a tentar se conectar ao servidor se o usuário pressionar o botão por 2 segundos, nesse caso, permanecer tentando se conectar infinitamente, a menos que o botão seja
@@ -67,3 +65,8 @@ quando virar o dia, um novo arquivo com a data seguinte deverá continuar salvan
 funcionando recebendo os dados em tempo real e fazendo a rota pela sessão ativa atual.
 * No dashboard deverá ter um novo botão, no canto inferior esquerdo que abrirá um pop-up, no qual ele irá ler a pasta "Historico", e
 mostrar lista com todos os históricos salvos, ao escolher um, mostrar toda a rota que teve naquele histórico.
+
+-------
+
+Regras de codificação:
+- Deixei tudo nos codigos bem documentado.
