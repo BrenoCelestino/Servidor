@@ -1,7 +1,5 @@
 Visão Geral e Objetivo
-Desenvolver um dispositivo de aquisição de dados (Data Logger) projetado para monitorar
-variáveis dinâmicas no espaço. O foco não é a movimentação, mas a precisão extrema na
-captação, fusão e envio de dados de geolocalização e inércia.
+Desenvolver um dispositivo de aquisição de dados (Data Logger) projetado para monitorar variáveis dinâmicas no espaço. O foco não é a movimentação, mas a precisão extrema na captação, fusão (GPS-Aided INS) e envio de dados de geolocalização e inércia, dividindo a carga de trabalho entre o hardware de borda (coleta) e o servidor (processamento matemático complexo).
 
 ---
 
@@ -11,36 +9,42 @@ IMU: MPU6050
 Módulo GPS: NEO-6M
 Botão Para Conexão
 
-Fluxo de Dados do Dispositivo:
+Fluxo de Dados do Dispositivo (Hardware Borda):
 
 * Esperar 5 segundos ao ligar o sistema antes de tentar iniciar a conexão com o servidor, para compensar o pico de energia e estabilizar os sensores.
-* Ler Dados do Módulo GPS.
-* Ler Dados do Módulo IMU.
+* Ler Dados completos do Módulo GPS: Latitude, Longitude, Velocidade (m/s), Curso/Direção de movimento (Heading) e valor numérico bruto da precisão (HDOP).
+* Ler Dados completos do Módulo IMU: Aceleração bruta nos eixos X, Y e Z (m/s²) e Giroscópio.
 * Ler Dados de data e hora do relógio atômico do Módulo GPS.
-* Realizar Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial). (utilizar Kalman Filter).
-* Se o módulo GPS estiver com precisão satelital adequada (mínimo de 5 satélites e filtro HDOP ativado para ignorar sinais ricocheteados em prédios), salvar os dados de histórico na memória RAM quando não estiver conectado ao servidor, fazendo a gravação 1 vez a cada 2 segundos neste modo (ainda que o sistema nunca tenha se conectado ao servidor). Quando a memória encher, operar como um buffer circular: liberar espaço apagando o registro mais antigo para salvar o novo.
-* Se não conseguir se conectar com o servidor dentro de 60 segundos após ligar ou após perder o sinal, não tentar mais e permanecer no modo desconectado para poupar energia.
-* Voltar a tentar se conectar ao servidor se o usuário pressionar o botão por 2 segundos. Nesse caso, ignorar o limite de tempo e permanecer tentando se conectar infinitamente, a menos que o botão seja pressionado novamente por 2 segundos.
-* Se estiver conectado ao Servidor, enviar os dados em tempo real via telemetria (Wi-Fi) para o servidor no computador, atualizando 5 vezes por segundo. Caso a precisão do GPS caia, enviar coordenadas zeradas mas manter o envio contínuo da inércia (Roll e Pitch).
--- Espera-se que no fim do fluxo, o dispositivo consiga armazenar dados offline com dados fusionados e com horário em tempo real e enviar em tempo real ao servidor.
+* Realizar Fusão de dados primária embarcada utilizando um Filtro de Kalman simples exclusivamente para calcular a atitude da placa (Roll e Pitch instantâneos), sem engarrafar o loop principal.
+* Empacotar os dados de telemetria expandida (Raw Data): Coordenadas, Satélites, HDOP, Velocidade, Curso, Roll, Pitch, AccX, AccY e AccZ.
+* Se o módulo GPS estiver com precisão satelital adequada (mínimo de 5 satélites e filtro HDOP < 3.0 para ignorar sinais ricocheteados indoor), salvar o pacote expandido na memória RAM quando não estiver conectado ao servidor. Fazer a gravação 1 vez a cada 2 segundos neste modo (ainda que o sistema nunca tenha se conectado ao servidor). Quando a RAM encher (limite seguro estipulado), operar como um buffer circular: liberar espaço apagando o registro mais antigo para salvar o novo.
+* Se não conseguir se conectar com o servidor dentro de 60 segundos após ligar ou após perder o sinal, não tentar mais e permanecer no modo desconectado para poupar energia (desligando a antena Wi-Fi).
+* Voltar a tentar se conectar ao servidor se o usuário pressionar o botão por 2 segundos. Nesse caso, ignorar o limite de tempo (Timeout) e permanecer tentando se conectar infinitamente, a menos que o botão seja pressionado novamente por 2 segundos.
+* Se estiver conectado à rede, mas o Servidor Python estiver fechado ou inacessível, preservar os dados na RAM e realizar tentativas automáticas de despejo via TCP a cada 10 segundos.
+* Se estiver perfeitamente conectado ao Servidor, enviar o pacote expandido em tempo real via telemetria (Wi-Fi/UDP) atualizando 5 vezes por segundo (5Hz). Caso a precisão do GPS caia, enviar coordenadas zeradas mas manter o envio contínuo da inércia e HDOP.
 
-Fluxo de Dados no Servidor Computador:
+Fluxo de Dados no Servidor Computador (Cérebro Matemático e UI):
 
-* Receber dados do Dispositivo.
-* Imprimir em tempo real no Console os dados do GPS, dados do IMU, Satélites e a Fusão dos Dados.
-* Mostrar em tempo real e plotá-los em um painel interativo no computador utilizando OpenStreetMap e APIs livres, aplicando filtros espaciais anti-ziguezague (média móvel e distância mínima) para gerar trajetos suaves. 
-* O painel deve possuir um "Modo Compacto" para expandir o mapa em tela cheia com bolhas flutuantes, mostrar o tempo total da sessão conectada (pausando o cronômetro em quedas de rede) e exibir a localização atual com um ícone de radar pulsante de alto zoom.
-* Registrar todo o histórico, com uma linha desenhada no mapa, do caminho pelo qual o rastreador já passou na sessão atual.
-* Quando o dispositivo for conectado pela primeira vez, ou quando ele voltar de uma reconexão, receber os dados que estavam sendo salvos na memória RAM do mesmo enquanto estava desconectado e preencher no histórico do mapa desenhado por onde ele passou, de preferência com uma cor diferente de quando estava conectado em tempo real.
+* Receber os pacotes de dados expandidos do Dispositivo (via porta UDP para tempo real e porta TCP para recuperação da memória RAM).
+* **Executar Algoritmo de Fusão EKF (Extended Kalman Filter) no Python:** 
+  1. Utilizar a Direção/Curso do GPS para alinhar matematicamente o eixo X/Y do acelerômetro do MPU6050 (solucionando a falta de bússola/magnetômetro).
+  2. Na Etapa de Predição: Utilizar a aceleração pura (AccX, AccY, AccZ) para estimar a posição entre as lacunas de tempo do GPS, mantendo a alta fluidez.
+  3. Na Etapa de Atualização: Utilizar a Latitude, Longitude e Velocidade do GPS para ancorar a estimativa, anulando o erro de *drift* (desvio) do IMU. A matriz de ruído do GPS (Matriz R) deve ser ajustada dinamicamente baseada no valor do HDOP recebido no pacote.
+* Caso o HDOP seja alto (indício de entrada em subsolo/túnel), o EKF no servidor deve suspender a leitura do GPS, baseando-se no IMU temporariamente ou congelando a coordenada, anulando o efeito "ziguezague" (Multipath).
+* Imprimir em tempo real no Console os dados do GPS, Inércia, HDOP e status da Fusão.
+* Mostrar em tempo real e plotar a posição calculada e fundida pelo EKF em um painel interativo utilizando OpenStreetMap e APIs livres. 
+* O painel deve possuir um "Modo Compacto" para expandir o mapa em tela cheia com bolhas flutuantes informativas, mostrar o tempo total de Uptime da sessão conectada (pausando o cronômetro em quedas de rede) e exibir a localização atual com um ícone de radar vermelho pulsante de alto zoom.
+* Registrar todo o histórico da sessão atual com uma linha contínua no mapa.
+* Quando o dispositivo for conectado pela primeira vez, ou voltar de uma reconexão, receber o bloco de dados atrasados (Raw Data) salvos na RAM, submetê-los ao algoritmo EKF retroativamente, e preencher o histórico do mapa ligando os pontos de apagão, utilizando uma cor diferente da rota online.
 
 ---
 
 Resultados Esperados:
 
-* Fusão de dados correta e sincronizada (sem "engarrafamento" na porta serial).
-* Trajetos representados de forma limpa e real, ignorando emaranhados e "pulos" quando o dispositivo estiver parado ou dentro de áreas sem cobertura (túneis e prédios).
-* Capacidade de recuperar um trajeto executado externamente de forma legível, no caso, recuperar um trajeto que o dispositivo fez quando estava desconectado do servidor extraindo os dados da memória RAM.
-* Transmitir os dados em tempo real e plotar em um painel interativo no computador, mostrando posição atual e todo histórico passado. Como um Google Maps/Earth.
+* Sistema híbrido de ponta (GPS-Aided INS), extraindo o máximo de precisão utilizando o hardware de borda apenas para amostragem de alta velocidade e o computador local para cálculos matriciais de geolocalização.
+* Trajetos representados de forma fluidamente contínua e imune a pulos, com curvas detalhadas preenchidas pela força inercial do acelerômetro.
+* Capacidade de recuperar um trajeto executado externamente de forma legível, extraindo os dados crus do Buffer Circular em RAM e fundindo-os retroativamente.
+* Transmitir os dados em tempo real e plotá-los em um painel interativo (Dashboard), mostrando posição atual e todo histórico passado, atuando como um centro de controle autônomo (estilo Google Maps/Earth).
 
 ---
 
@@ -50,17 +54,19 @@ Status de LED da própria placa:
 * Rodando Desconectado (Após perder conexão) = Oscilando Rápido.
 * Rodando Conectado ao Servidor = Oscilando Devagar.
 * Buscando Servidor = Piscar Rápido 4 segundos, parar 1, recomeçar.
+* Enviando Despejo de RAM (TCP) = Aceso fixamente.
 
 ---
 
 O Fluxo do Backup de Histórico de Rotas do Servidor:
 
 * Criar uma pasta na raiz chamada "Historico", se não existir ainda.
-* Criar arquivo txt com dia/mês/ano do registro, sendo um registro por dia. Ou seja, cada arquivo salvará apenas o ciclo do dia em que foi criado; quando virar o dia, um novo arquivo com a data seguinte deverá continuar salvando.
-* O arquivo é de backup, podendo ser utilizado no dashboard para visualizar históricos passados. O modo em tempo real deve continuar funcionando em paralelo, recebendo os dados ao vivo e desenhando a rota da sessão ativa atual.
-* No dashboard deverá ter um botão flutuante que abrirá um pop-up, no qual o sistema irá ler a pasta "Historico" e mostrar uma lista com todos os registros salvos. Ao escolher um, plotar toda a rota percorrida naquele histórico específico, exibindo uma legenda clara no painel para diferenciar as rotas online, offline (recuperadas da RAM) e consultas de arquivos antigos.
+* Criar arquivo txt com dia/mês/ano do registro, sendo um registro por dia. Cada arquivo salvará apenas o ciclo do dia em que foi criado; quando virar o dia, um novo arquivo com a data seguinte continuará salvando.
+* O arquivo TXT deverá atuar como Banco de Dados Raw (Cru), salvando todas as variáveis brutas que vêm da placa, ignorando as suavizações geradas pelo EKF, para permitir calibrações matemáticas futuras ou reprodutibilidade de experimentos no laboratório.
+* O arquivo é de backup e auditoria. O modo em tempo real deve continuar funcionando em paralelo, recebendo dados e plotando ao vivo.
+* No dashboard, haverá um botão flutuante ("Acessar Backups") que abrirá um pop-up central. O sistema irá ler a pasta "Historico" e exibir um menu suspenso com os dias salvos. Ao selecionar um arquivo e acionar o botão de carga, o painel deve plotar a rota percorrida no passado com uma cor distinta (Roxa) e realizar o auto-enquadramento (Zoom Fit) da área percorrida.
 
 -------
 
 Regras de codificação:
-- Deixei tudo nos codigos bem documentado.
+- Deixei tudo nos códigos bem documentado e comentado, para que possa ser perfeitamente estudado por um leigo.
