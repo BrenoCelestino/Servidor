@@ -17,7 +17,7 @@ const char* ssid = "iotgps";
 const char* password = "iot12345";
 const char* serverIP = "192.168.137.1"; 
 const int udpPort = 8080;               
-const int tcpPort = 8081;              
+const int tcpPort = 8081;          
 
 WiFiUDP udp;
 WiFiClient tcpClient;
@@ -37,6 +37,7 @@ uint32_t searchTimer = 0;
 uint32_t offlineSaveTimer = 0;
 uint32_t onlineSendTimer = 0;
 uint32_t serialPrintTimer = 0; 
+uint32_t tcpRetryTimer = 0; // Novo timer para re-tentar enviar o histórico
 
 uint32_t btnPressStartTime = 0;
 bool btnIsPressed = false;
@@ -107,13 +108,8 @@ String getStateName(SystemState s) {
 // ==========================================
 bool isGpsAccurate() {
   if (!gps.location.isValid()) return false;
-  
-  // Exige no mínimo 5 satélites conectados
   if (gps.satellites.value() < 5) return false;
-  
-  // HDOP > 3.0 significa que o sinal está ricocheteando (dentro de prédio/túnel)
   if (gps.hdop.isValid() && gps.hdop.hdop() > 3.0) return false;
-
   return true;
 }
 
@@ -124,7 +120,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=========================================");
-  Serial.println("[SISTEMA] Iniciando Data Logger ESP32 (Com Filtro HDOP)");
+  Serial.println("[SISTEMA] Iniciando Data Logger ESP32 (V2.0)");
   Serial.println("=========================================");
 
   Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, -1);
@@ -229,7 +225,7 @@ void executeStateMachine() {
     case SEARCHING:
       if (millis() - serialPrintTimer >= 2000) {
         serialPrintTimer = millis();
-        Serial.println("[WIFI] Buscando rede... | Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.hdop()));
+        Serial.println("[WIFI] Buscando rede... | Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.isValid() ? gps.hdop.hdop() : 0.0));
       }
 
       if (WiFi.status() == WL_CONNECTED) {
@@ -249,11 +245,10 @@ void executeStateMachine() {
       if (millis() - offlineSaveTimer >= 2000) { 
         offlineSaveTimer = millis();
         
-        // MUDANÇA: Usa a nova trava matemática HDOP
         if (isGpsAccurate() && gps.time.isValid()) {
           salvarRAMOffline();
         } else {
-          Serial.println("[STANDBY] GPS com sinal ruim ou indoor (Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.hdop()) + ")");
+          Serial.println("[STANDBY] GPS com sinal ruim ou indoor (Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.isValid() ? gps.hdop.hdop() : 0.0) + ")");
         }
       }
       
@@ -275,9 +270,18 @@ void executeStateMachine() {
         forceInfiniteSearch = false; 
         WiFi.begin(ssid, password);
       } else {
-        if (millis() - onlineSendTimer >= 200) {
-          onlineSendTimer = millis();
-          enviarUDP();
+        
+        // NOVA REGRA: Tenta reenviar o histórico a cada 10s caso o servidor Python estivesse fechado
+        if (bufferCount > 0 && (millis() - tcpRetryTimer >= 10000)) {
+          tcpRetryTimer = millis();
+          currentState = SENDING_HISTORY;
+        } 
+        else {
+          // Operação normal em tempo real (5Hz)
+          if (millis() - onlineSendTimer >= 200) {
+            onlineSendTimer = millis();
+            enviarUDP();
+          }
         }
       }
       break;
@@ -309,7 +313,6 @@ void salvarRAMOffline() {
 void enviarUDP() {
   char payload[150]; 
   
-  // MUDANÇA: Se o sinal for ruim, manda "lat e lng" como 0.0, mas CONTINUA MANDANDO O ROLL E PITCH (IMU)!
   if (isGpsAccurate()) {
     snprintf(payload, sizeof(payload), "{\"roll\":%.2f,\"pitch\":%.2f,\"lat\":%.6f,\"lng\":%.6f,\"sats\":%d}",
              kalAngleX, kalAngleY, gps.location.lat(), gps.location.lng(), gps.satellites.value());
@@ -322,12 +325,14 @@ void enviarUDP() {
   udp.print(payload);
   udp.endPacket();
 
+  // ATUALIZADO: Mostra HDOP no console em tempo real
   Serial.print("[UDP TX] ");
-  Serial.println(payload);
+  Serial.print(payload);
+  Serial.println(" | HDOP: " + String(gps.hdop.isValid() ? gps.hdop.hdop() : 0.0));
 }
 
 void enviarHistoricoTCP() {
-  Serial.println("\n[TCP] Despejando RAM...");
+  Serial.println("\n[TCP] Tentando conectar ao Servidor Base para despejar RAM...");
   
   if (tcpClient.connect(serverIP, tcpPort)) {
     int startIndex = (bufferHead - bufferCount + MAX_RECORDS) % MAX_RECORDS;
@@ -349,11 +354,13 @@ void enviarHistoricoTCP() {
     }
     
     bufferCount = 0; bufferHead = 0;
-    Serial.println("[TCP] Sucesso! Memoria RAM liberada.");
+    Serial.println("[TCP] Sucesso! Dados sincronizados. Memoria RAM liberada.");
     tcpClient.stop();
   } else {
-    Serial.println("[TCP ERRO] Servidor inacessivel.");
+    // MUDANÇA: Aviso claro de que vai tentar de novo, não perdendo a RAM!
+    Serial.println("[TCP ERRO] Servidor inacessivel (Python fechado?). RAM preservada! Tentarei novamente em 10s.");
   }
+  
   currentState = ONLINE; 
 }
 
