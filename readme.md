@@ -1,22 +1,24 @@
 # 🚀 Data Logger Espacial: Rastreador GPS + IMU com *Store & Forward*
 
-Um sistema profissional de telemetria e aquisição de dados espaciais focado em extrema precisão. Desenvolvido no **ESP32**, o sistema utiliza fusão de sensores local (Filtro de Kalman) e conta com uma arquitetura avançada de **Store and Forward** em Memória RAM, capaz de atuar como "Caixa Preta" durante perdas de sinal e sincronizar trajetos retroativos perfeitamente com precisão de relógio atômico.
+Um sistema profissional de telemetria e aquisição de dados espaciais focado em extrema precisão. Desenvolvido no **ESP32**, o sistema utiliza fusão de sensores local (Filtro de Kalman) e conta com uma arquitetura avançada de **Store and Forward** em Memória RAM. O dispositivo atua como uma verdadeira "Caixa Preta" durante perdas de sinal, filtrando erros de multicaminho (indoor) e sincronizando trajetos retroativos no mapa base com precisão de relógio atômico.
 
-Desenvolvido com apoio institucional / acadêmico (Laboratório HORUS - IFPB).
+Projeto desenvolvido com apoio institucional/acadêmico (Laboratório HORUS - IFPB).
 
 ## ✨ Principais Funcionalidades
 
-*   **Processamento na Borda (Edge Computing):** O Filtro de Kalman é processado pelo núcleo do ESP32 a 100Hz, fundindo dados de aceleração e giroscópio instantaneamente.
-*   **Dual-Protocol Network:** Telemetria ao vivo via **UDP** (sem gargalos, a 5Hz) e despejo de histórico recuperado via **TCP** (com garantia de integridade).
-*   **Caixa Preta em RAM (Buffer Circular):** Dispensando o uso de módulos SD Card externos, o sistema utiliza a vasta memória RAM do ESP32 para alocar até **1 HORA contínua** de dados offline (1800 registros a cada 2 segundos). Se o tempo for excedido, os dados mais antigos são sobrescritos para evitar travamentos.
-*   **Banco de Dados Perpétuo:** O servidor Python espelha e mescla automaticamente os dados recebidos em arquivos TXT diários na pasta local `Historico`.
-*   **Dashboard UI/UX Interativo:** Painel web *dark-mode* com acompanhamento instantâneo, **Modo Compacto** (Fullscreen map) e um Pop-up flutuante para auditoria de viagens passadas gravadas no PC.
+*   **Processamento na Borda (Edge Computing):** Filtro de Kalman rodando a 100Hz no núcleo do ESP32, fundindo dados de aceleração e giroscópio instantaneamente.
+*   **Filtros de Precisão Espacial:** 
+    *   *(Hardware):* Trava **HDOP (< 3.0)** e limite de Satélites no ESP32 para ignorar sinais ricocheteados em prédios (Multipath Effect).
+    *   *(Software):* Filtro Anti-Ziguezague no Python (Média Móvel e Distância de Haversine) para gerar trajetos ultra-suaves típicos de apps como Waze/Strava.
+*   **Caixa Preta em RAM (Buffer Circular):** Dispensando módulos SD Card físicos, o sistema utiliza a memória RAM do ESP32 para alocar até **1 HORA contínua** de dados offline (1800 registros a cada 2 segundos). Se excedido, os dados mais antigos são sobrescritos de forma segura.
+*   **Dual-Protocol & TCP Retry:** Telemetria ao vivo via **UDP** (5Hz) e despejo de histórico recuperado via **TCP**. Se o servidor estiver fechado, o ESP32 preserva a RAM e tenta enviar novamente a cada 10 segundos!
+*   **Dashboard UI/UX Interativo:** Painel web *dark-mode* com Cronômetro de Sessão (Uptime), **Modo Compacto** (Fullscreen), Ícone de Radar Pulsante e um Banco de Dados Local com pop-up para auditar missões do passado.
 
 ---
 
 ## 🛠️ Hardware e Diagrama de Ligações (Wiring)
 
-Para manter o projeto industrialmente limpo e imune a falhas mecânicas, **não utilizamos módulos SD, LEDs externos ou buzzers**. Toda a sinalização visual é feita pelo LED onboard do ESP32, e a comunicação GPS utiliza a Porta Serial de Hardware nativa.
+Para manter o projeto industrialmente limpo e imune a falhas mecânicas, **não utilizamos módulos SD, LEDs externos ou buzzers**. Toda a sinalização visual é feita pelo LED onboard, e o firmware possui arquitetura *Anti-Crash* (`snprintf` e Watchdog Feeding) para rodar por meses ininterruptos.
 
 *   **Controladora:** DOIT ESP32 DevKit V1 (ou similar)
 *   **GPS:** Ublox NEO-6M
@@ -37,16 +39,15 @@ Para manter o projeto industrialmente limpo e imune a falhas mecânicas, **não 
 
 ## 🧠 Máquina de Estados e Interface Onboard (LED)
 
-O LED Azul embutido (GPIO 2) atua como painel de diagnóstico de rede da máquina:
+O LED Azul embutido (GPIO 2) atua como painel de diagnóstico da máquina:
 
 | Estado da Máquina | Padrão do LED Onboard | Ação Ocorrendo |
 | :--- | :--- | :--- |
 | **Boot Delay** | 🌑 Apagado | Delay inicial de 5s. Estabilizando tensão do GPS/IMU. |
-| **Buscando Rede** | ⚡ Pisca rápido (4s), Apaga (1s) | Tentando conectar. Timeout automático de 30 segundos. |
-| **Offline (S/ Histórico)** | 🔄 Pisca Constantemente (1Hz) | Modo economia. Gravando na RAM a 2s se houver Fix satelital. |
-| **Offline (Caiu a rede)** | ⚠️ Oscilação Rápida (Strobe) | Caiu a rede durante a missão. Gravando na RAM. |
+| **Buscando Rede** | ⚡ Pisca rápido (4s), Apaga (1s) | Tentando conectar. Timeout automático de 60 segundos. |
+| **Offline (Standby / RAM)** | 🔄 Pisca Constantemente / Estrobo | Gravando na RAM a 2s (Se HDOP e Fix OK). |
 | **Enviando RAM** | 🔵 Totalmente Aceso | Conexão restaurada! Despejando RAM via TCP para o Python. |
-| **Online (Ao Vivo)** | 🫀 Pulso Lento (Heartbeat) | Operação Normal. Enviando telemetria em tempo real (UDP 5Hz). |
+| **Online (Ao Vivo)** | 🫀 Pulso Lento (Heartbeat) | Enviando telemetria (UDP 5Hz). Segura envios de GPS nulo. |
 
 **🔘 Override Manual (Botão GPIO 4):** Segurar por 2 segundos inverte a regra do Timeout de economia de energia, forçando o dispositivo a procurar a base Wi-Fi infinitamente até achar (ideal ao retornar para a base de operações).
 
@@ -54,7 +55,7 @@ O LED Azul embutido (GPIO 2) atua como painel de diagnóstico de rede da máquin
 
 ## 💻 Servidor Python e Dashboard Interativo
 
-O Servidor Base é uma aplicação Flask Assíncrona Multi-thread que atua em três frentes simultâneas: Escuta UDP, Escuta TCP e gerencia WebSockets para a Interface. Pode ser executado em PCs ou **diretamente no Celular** (via Pydroid 3 / Termux) configurando o Roteador de Bolso (Hotspot).
+O Servidor Base é uma aplicação Flask Assíncrona Multi-thread. Pode ser executado em PCs ou **diretamente no Celular** (via Pydroid 3 / Termux) utilizando o Roteador de Bolso (Hotspot) para testes outdoor.
 
 ### 🗺️ Legenda Dinâmica do Mapa:
 *   🟥 **Linha Vermelha:** Rota Online (Sessão Ativa, desenhada ao vivo via UDP).
@@ -72,7 +73,7 @@ O Servidor Base é uma aplicação Flask Assíncrona Multi-thread que atua em tr
    ```bash
    python servidor.py
    ```
-3. Acesse o painel pelo navegador: `http://localhost:5000`. *(Obs: A pasta `Historico` e a subpasta de imagens serão gerenciadas pelo código).*
+3. Acesse o painel pelo navegador: `http://localhost:5000`. *(Obs: A pasta `Historico` e a subpasta `/Arquivos/horus.png` serão gerenciadas localmente).*
 
 #### 2. Hardware ESP32 (Arduino IDE)
 1. Instale a placa ESP32 no Gerenciador de Placas da Arduino IDE.
@@ -83,7 +84,11 @@ O Servidor Base é uma aplicação Flask Assíncrona Multi-thread que atua em tr
    const char* password = "SENHA";
    const char* serverIP = "192.168.X.X"; // IP da máquina rodando o Python
    ```
-4. Selecione "ESP32 Dev Module", defina a porta COM e faça o Upload. Abra o Monitor Serial (115200 baud) para acompanhar o bootleg e a telemetria do sistema em detalhes.
+4. Selecione "ESP32 Dev Module", defina a porta COM e faça o Upload. Abra o Monitor Serial (115200 baud) para acompanhar os *logs* em tempo real com informações detalhadas (incluindo o HDOP).
 
 ---
-*Projeto arquitetado para altíssima resiliência em campo, eliminando dependência de conexões ininterruptas e armazenamentos mecânicos (SD).*
+
+## 🗂️ Gestão de Histórico (Auditoria de Rotas)
+Toda a operação (seja via pacote UDP ao vivo ou via pacote TCP recuperado) é mesclada e salva no computador dentro da pasta `Historico`, organizada por arquivos diários (Ex: `15-05-2026.txt`). 
+
+No Dashboard, utilize o botão flutuante **(🗂️ Acessar Backups)** para abrir o Modal Suspenso. Ao selecionar uma data, o sistema plota retroativamente o histórico roxo e aplica um *Auto-Zoom Fit* no trajeto para auditoria espacial!
