@@ -1,4 +1,4 @@
-#include <WiFi.h>      // Biblioteca nativa do ESP32
+#include <WiFi.h>      
 #include <WiFiUdp.h>
 #include <Wire.h>
 #include <TinyGPS++.h>
@@ -6,18 +6,18 @@
 // ==========================================
 // CONFIGURAÇÕES DE PINOS (ESP32)
 // ==========================================
-#define GPS_RX_PIN 16  // RX2 nativo do ESP32
-#define BTN_PIN    4   // Usando GPIO4 para o botão
-#define LED_PIN    2   // LED Onboard Azul padrão do ESP32 (Normalmente HIGH = ON)
+#define GPS_RX_PIN 16  
+#define BTN_PIN    4   
+#define LED_PIN    2   
 
 // ==========================================
 // REDE E SERVIDORES
 // ==========================================
-const char* ssid = "NOME_DA_SUA_REDE";
-const char* password = "SENHA_DA_SUA_REDE";
-const char* serverIP = "192.168.1.100"; // Mude para o IP do seu PC/Celular
+const char* ssid = "iotgps";
+const char* password = "iot12345";
+const char* serverIP = "192.168.137.1"; 
 const int udpPort = 8080;               
-const int tcpPort = 8081;               
+const int tcpPort = 8081;              
 
 WiFiUDP udp;
 WiFiClient tcpClient;
@@ -57,8 +57,7 @@ struct OfflineData {
   float pitch;
 };
 
-// ESP32 tem muita RAM livre. 1800 registros a cada 2s = 1 HORA exata de "Caixa Preta"!
-const int MAX_RECORDS = 1800; 
+const int MAX_RECORDS = 1800; // 1 HORA exata gravando a cada 2s
 OfflineData historyBuffer[MAX_RECORDS];
 int bufferHead = 0;  
 int bufferCount = 0; 
@@ -104,25 +103,38 @@ String getStateName(SystemState s) {
 }
 
 // ==========================================
+// FILTRO INTELIGENTE DE PRECISÃO (HDOP)
+// ==========================================
+bool isGpsAccurate() {
+  if (!gps.location.isValid()) return false;
+  
+  // Exige no mínimo 5 satélites conectados
+  if (gps.satellites.value() < 5) return false;
+  
+  // HDOP > 3.0 significa que o sinal está ricocheteando (dentro de prédio/túnel)
+  if (gps.hdop.isValid() && gps.hdop.hdop() > 3.0) return false;
+
+  return true;
+}
+
+// ==========================================
 // SETUP
 // ==========================================
 void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n\n=========================================");
-  Serial.println("[SISTEMA] Iniciando Data Logger ESP32 (Modo RAM - 1 Hora)");
+  Serial.println("[SISTEMA] Iniciando Data Logger ESP32 (Com Filtro HDOP)");
   Serial.println("=========================================");
 
-  // ESP32: Usando porta Serial 2 via Hardware (Muito mais rápido e estável que SoftwareSerial)
   Serial2.begin(9600, SERIAL_8N1, GPS_RX_PIN, -1);
   
   pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, LOW); // Apagado
-  
-  // ESP32 tem resistor de pull-down ativável via software!
+  digitalWrite(LED_PIN, LOW); 
   pinMode(BTN_PIN, INPUT_PULLDOWN);     
 
   Wire.begin();
+  Wire.setTimeOut(150); 
   Wire.beginTransmission(MPU); Wire.write(0x6B); Wire.write(0); Wire.endTransmission(true);
   Serial.println("[IMU] Modulo MPU6050 inicializado.");
 
@@ -150,9 +162,6 @@ void loop() {
   }
 }
 
-// ==========================================
-// LEITURA DE SENSORES
-// ==========================================
 void readGPS() {
   while (Serial2.available() > 0) {
     gps.encode(Serial2.read());
@@ -164,22 +173,22 @@ void readIMU() {
   if (dt_us >= 10000) { 
     timerIMU = micros();
     float dt = dt_us / 1000000.0; 
-    Wire.beginTransmission(MPU); Wire.write(0x3B); Wire.endTransmission(false);
-    Wire.requestFrom(MPU, 14, true); 
-    accX = (Wire.read() << 8 | Wire.read()) / 16384.0; accY = (Wire.read() << 8 | Wire.read()) / 16384.0; accZ = (Wire.read() << 8 | Wire.read()) / 16384.0;
-    Wire.read(); Wire.read(); 
-    gyroX = (Wire.read() << 8 | Wire.read()) / 131.0; gyroY = (Wire.read() << 8 | Wire.read()) / 131.0; gyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
+    
+    Wire.beginTransmission(MPU); Wire.write(0x3B); 
+    if(Wire.endTransmission(false) == 0) { 
+      Wire.requestFrom(MPU, 14, true); 
+      accX = (Wire.read() << 8 | Wire.read()) / 16384.0; accY = (Wire.read() << 8 | Wire.read()) / 16384.0; accZ = (Wire.read() << 8 | Wire.read()) / 16384.0;
+      Wire.read(); Wire.read(); 
+      gyroX = (Wire.read() << 8 | Wire.read()) / 131.0; gyroY = (Wire.read() << 8 | Wire.read()) / 131.0; gyroZ = (Wire.read() << 8 | Wire.read()) / 131.0;
 
-    float roll  = atan2(accY, accZ) * RAD_TO_DEG;
-    float pitch = atan(-accX / sqrt(accY * accY + accZ * accZ)) * RAD_TO_DEG;
-    kalAngleX = kalmanRoll.getAngle(roll, gyroX, dt);
-    kalAngleY = kalmanPitch.getAngle(pitch, gyroY, dt);
+      float roll  = atan2(accY, accZ) * RAD_TO_DEG;
+      float pitch = atan(-accX / sqrt(accY * accY + accZ * accZ)) * RAD_TO_DEG;
+      kalAngleX = kalmanRoll.getAngle(roll, gyroX, dt);
+      kalAngleY = kalmanPitch.getAngle(pitch, gyroY, dt);
+    }
   }
 }
 
-// ==========================================
-// BOTÃO
-// ==========================================
 void handleButton() {
   bool isHigh = (digitalRead(BTN_PIN) == HIGH);
   if (isHigh && !btnIsPressed) {
@@ -201,14 +210,11 @@ void handleButton() {
         WiFi.begin(ssid, password);
       }
     } else {
-      Serial.println("\n[BOTAO] Voltando ao modo de economia 30s.");
+      Serial.println("\n[BOTAO] Voltando ao modo de economia (Timeout de 1 Minuto).");
     }
   }
 }
 
-// ==========================================
-// MÁQUINA DE ESTADOS
-// ==========================================
 void executeStateMachine() {
   switch (currentState) {
     
@@ -223,35 +229,31 @@ void executeStateMachine() {
     case SEARCHING:
       if (millis() - serialPrintTimer >= 2000) {
         serialPrintTimer = millis();
-        Serial.println("[WIFI] Buscando rede... | Sats Fixados: " + String(gps.satellites.value()));
+        Serial.println("[WIFI] Buscando rede... | Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.hdop()));
       }
 
       if (WiFi.status() == WL_CONNECTED) {
         hasEverConnected = true;
         Serial.println("\n[WIFI] Conectado! IP: " + WiFi.localIP().toString());
-        
-        if (bufferCount > 0) {
-          Serial.println("[RAM] Dados pendentes na memoria (" + String(bufferCount) + " registros). Iniciando envio.");
-          currentState = SENDING_HISTORY;
-        } else {
-          currentState = ONLINE;
-        }
+        currentState = (bufferCount > 0) ? SENDING_HISTORY : ONLINE;
       } 
-      else if (!forceInfiniteSearch && (millis() - searchTimer >= 30000)) {
-        Serial.println("\n[WIFI] Timeout de 30s atingido. Indo para OFFLINE (Memoria RAM).");
+      else if (!forceInfiniteSearch && (millis() - searchTimer >= 60000)) {
+        Serial.println("\n[WIFI] Timeout de 1 minuto atingido sem exito na conexao.");
+        Serial.println("[WIFI] Indo para OFFLINE. Antena desligada para poupar energia.");
         WiFi.disconnect();
         currentState = OFFLINE;
       }
       break;
 
     case OFFLINE:
-      if (millis() - offlineSaveTimer >= 2000) { // A CADA 2 SEGUNDOS
+      if (millis() - offlineSaveTimer >= 2000) { 
         offlineSaveTimer = millis();
         
-        if (gps.location.isValid() && gps.time.isValid()) {
+        // MUDANÇA: Usa a nova trava matemática HDOP
+        if (isGpsAccurate() && gps.time.isValid()) {
           salvarRAMOffline();
         } else {
-          Serial.println("[RAM OFF] Aguardando sinal GPS... Sats: " + String(gps.satellites.value()));
+          Serial.println("[STANDBY] GPS com sinal ruim ou indoor (Sats: " + String(gps.satellites.value()) + " HDOP: " + String(gps.hdop.hdop()) + ")");
         }
       }
       
@@ -287,7 +289,6 @@ void executeStateMachine() {
 // ==========================================
 void salvarRAMOffline() {
   int index = bufferHead;
-  
   historyBuffer[index].year = gps.date.year();
   historyBuffer[index].month = gps.date.month();
   historyBuffer[index].day = gps.date.day();
@@ -300,61 +301,59 @@ void salvarRAMOffline() {
   historyBuffer[index].pitch = kalAngleY;
 
   bufferHead = (bufferHead + 1) % MAX_RECORDS;
-  if (bufferCount < MAX_RECORDS) {
-    bufferCount++;
-  }
+  if (bufferCount < MAX_RECORDS) bufferCount++;
   
-  Serial.println("[RAM GRAVANDO] Buffer: " + String(bufferCount) + "/" + String(MAX_RECORDS) + " (Sats: " + String(gps.satellites.value()) + ")");
+  Serial.println("[RAM GRAVANDO] Historico: " + String(bufferCount) + "/" + String(MAX_RECORDS));
 }
 
 void enviarUDP() {
-  String payload = "{\"roll\":" + String(kalAngleX, 2) + ",\"pitch\":" + String(kalAngleY, 2);
-  if (gps.location.isValid()) {
-    payload += ",\"lat\":" + String(gps.location.lat(), 6) + ",\"lng\":" + String(gps.location.lng(), 6) + 
-               ",\"sats\":" + String(gps.satellites.value());
+  char payload[150]; 
+  
+  // MUDANÇA: Se o sinal for ruim, manda "lat e lng" como 0.0, mas CONTINUA MANDANDO O ROLL E PITCH (IMU)!
+  if (isGpsAccurate()) {
+    snprintf(payload, sizeof(payload), "{\"roll\":%.2f,\"pitch\":%.2f,\"lat\":%.6f,\"lng\":%.6f,\"sats\":%d}",
+             kalAngleX, kalAngleY, gps.location.lat(), gps.location.lng(), gps.satellites.value());
   } else {
-    payload += ",\"lat\":0.0,\"lng\":0.0,\"sats\":0";
+    snprintf(payload, sizeof(payload), "{\"roll\":%.2f,\"pitch\":%.2f,\"lat\":0.0,\"lng\":0.0,\"sats\":%d}",
+             kalAngleX, kalAngleY, gps.satellites.value());
   }
-  payload += "}";
 
   udp.beginPacket(serverIP, udpPort);
   udp.print(payload);
   udp.endPacket();
-  
-  Serial.println("[UDP TX] " + payload);
+
+  Serial.print("[UDP TX] ");
+  Serial.println(payload);
 }
 
 void enviarHistoricoTCP() {
-  Serial.println("\n[TCP] Conectando ao Servidor para despejo de RAM...");
+  Serial.println("\n[TCP] Despejando RAM...");
   
   if (tcpClient.connect(serverIP, tcpPort)) {
-    Serial.println("[TCP] Conectado! Enviando " + String(bufferCount) + " registros...");
-    
     int startIndex = (bufferHead - bufferCount + MAX_RECORDS) % MAX_RECORDS;
+    char dataLine[100]; 
     
     for (int i = 0; i < bufferCount; i++) {
       int idx = (startIndex + i) % MAX_RECORDS;
       
-      String data = String(historyBuffer[idx].year) + "-" + String(historyBuffer[idx].month) + "-" + String(historyBuffer[idx].day) + "T" +
-                    String(historyBuffer[idx].hour) + ":" + String(historyBuffer[idx].minute) + ":" + String(historyBuffer[idx].second) + "Z," +
-                    String(historyBuffer[idx].lat, 6) + "," + String(historyBuffer[idx].lng, 6) + "," + 
-                    String(historyBuffer[idx].roll, 2) + "," + String(historyBuffer[idx].pitch, 2);
+      snprintf(dataLine, sizeof(dataLine), "%04d-%02d-%02dT%02d:%02d:%02dZ,%.6f,%.6f,%.2f,%.2f",
+               historyBuffer[idx].year, historyBuffer[idx].month, historyBuffer[idx].day,
+               historyBuffer[idx].hour, historyBuffer[idx].minute, historyBuffer[idx].second,
+               historyBuffer[idx].lat, historyBuffer[idx].lng,
+               historyBuffer[idx].roll, historyBuffer[idx].pitch);
                     
-      tcpClient.println(data);
+      tcpClient.println(dataLine);
       
-      readGPS(); // Mantém o GPS respirando
-      delay(2); 
+      readGPS(); 
+      yield(); 
     }
     
-    bufferCount = 0;
-    bufferHead = 0;
-    
+    bufferCount = 0; bufferHead = 0;
     Serial.println("[TCP] Sucesso! Memoria RAM liberada.");
     tcpClient.stop();
   } else {
-    Serial.println("[TCP ERRO] Servidor inacessivel! Os dados foram mantidos na RAM.");
+    Serial.println("[TCP ERRO] Servidor inacessivel.");
   }
-  
   currentState = ONLINE; 
 }
 
@@ -363,8 +362,7 @@ void enviarHistoricoTCP() {
 // ==========================================
 void updateLED() {
   uint32_t t = millis();
-  bool ledState = LOW; // ESP32 geralmente acende o LED com HIGH
-
+  bool ledState = LOW; 
   switch (currentState) {
     case BOOT_DELAY: ledState = LOW; break;
     case SEARCHING: ledState = (t % 5000 < 4000) ? ((t % 200 < 100) ? HIGH : LOW) : LOW; break;
